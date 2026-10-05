@@ -10,35 +10,30 @@ Other items:
 
 from __future__ import annotations
 
+import os
 import platform
 import sys
 from typing import TYPE_CHECKING
 
 from pandas.compat._constants import (
-    CHAINED_WARNING_DISABLED,
     IS64,
     ISMUSL,
+    PY311,
     PY312,
-    PY313,
-    PY314,
-    PY315,
     PYPY,
     WASM,
 )
 from pandas.compat.numpy import is_numpy_dev
 from pandas.compat.pyarrow import (
     HAS_PYARROW,
-    PYARROW_INSTALLED,
-    PYARROW_MIN_VERSION,
+    pa_version_under10p1,
+    pa_version_under11p0,
+    pa_version_under13p0,
+    pa_version_under14p0,
+    pa_version_under14p1,
+    pa_version_under16p0,
     pa_version_under17p0,
     pa_version_under18p0,
-    pa_version_under19p0,
-    pa_version_under20p0,
-    pa_version_under21p0,
-    pa_version_under22p0,
-    pa_version_under23p0,
-    pa_version_under25p0,
-    pa_version_under26p0,
 )
 
 if TYPE_CHECKING:
@@ -141,27 +136,34 @@ def is_platform_riscv64() -> bool:
     return platform.machine() == "riscv64"
 
 
+def is_ci_environment() -> bool:
+    """
+    Checking if running in a continuous integration environment by checking
+    the PANDAS_CI environment variable.
+
+    Returns
+    -------
+    bool
+        True if the running in a continuous integration environment.
+    """
+    return os.environ.get("PANDAS_CI", "0") == "1"
+
+
 __all__ = [
-    "CHAINED_WARNING_DISABLED",
+    "is_numpy_dev",
+    "pa_version_under10p1",
+    "pa_version_under11p0",
+    "pa_version_under13p0",
+    "pa_version_under14p0",
+    "pa_version_under14p1",
+    "pa_version_under16p0",
+    "pa_version_under17p0",
+    "pa_version_under18p0",
     "HAS_PYARROW",
     "IS64",
     "ISMUSL",
+    "PY311",
     "PY312",
-    "PY313",
-    "PY314",
-    "PY315",
-    "PYARROW_INSTALLED",
-    "PYARROW_MIN_VERSION",
     "PYPY",
     "WASM",
-    "is_numpy_dev",
-    "pa_version_under17p0",
-    "pa_version_under18p0",
-    "pa_version_under19p0",
-    "pa_version_under20p0",
-    "pa_version_under21p0",
-    "pa_version_under22p0",
-    "pa_version_under23p0",
-    "pa_version_under25p0",
-    "pa_version_under26p0",
 ]

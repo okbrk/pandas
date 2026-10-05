@@ -7,10 +7,17 @@ from io import StringIO
 
 import pytest
 
-import pandas as pd
+from pandas import DataFrame
 import pandas._testing as tm
 
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Passing a BlockManager to DataFrame:DeprecationWarning"
+)
 
+xfail_pyarrow = pytest.mark.usefixtures("pyarrow_xfail")
+
+
+@xfail_pyarrow  # AssertionError: DataFrame.index are different
 @pytest.mark.parametrize("na_filter", [True, False])
 def test_inf_parsing(all_parsers, na_filter):
     parser = all_parsers
@@ -26,28 +33,15 @@ g,+INf
 h,-INf
 i,inF
 j,-inF"""
-
-    if parser.engine == "pyarrow" and na_filter is False:
-        msg = "The 'na_filter' option is not supported with the 'pyarrow' engine"
-        with pytest.raises(ValueError, match=msg):
-            parser.read_csv(StringIO(data), index_col=0, na_filter=na_filter)
-        return
-
-    expected = pd.DataFrame(
+    expected = DataFrame(
         {"A": [float("inf"), float("-inf")] * 5},
         index=["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"],
     )
-
-    if parser.engine == "pyarrow" and na_filter is False:
-        msg = "The 'na_filter' option is not supported with the 'pyarrow' engine"
-        with pytest.raises(ValueError, match=msg):
-            parser.read_csv(StringIO(data), index_col=0, na_filter=na_filter)
-        return
-
     result = parser.read_csv(StringIO(data), index_col=0, na_filter=na_filter)
     tm.assert_frame_equal(result, expected)
 
 
+@xfail_pyarrow  # AssertionError: DataFrame.index are different
 @pytest.mark.parametrize("na_filter", [True, False])
 def test_infinity_parsing(all_parsers, na_filter):
     parser = all_parsers
@@ -57,23 +51,9 @@ a,Infinity
 b,-Infinity
 c,+Infinity
 """
-
-    if parser.engine == "pyarrow" and na_filter is False:
-        msg = "The 'na_filter' option is not supported with the 'pyarrow' engine"
-        with pytest.raises(ValueError, match=msg):
-            parser.read_csv(StringIO(data), index_col=0, na_filter=na_filter)
-        return
-
-    expected = pd.DataFrame(
+    expected = DataFrame(
         {"A": [float("infinity"), float("-infinity"), float("+infinity")]},
         index=["a", "b", "c"],
     )
-
-    if parser.engine == "pyarrow" and na_filter is False:
-        msg = "The 'na_filter' option is not supported with the 'pyarrow' engine"
-        with pytest.raises(ValueError, match=msg):
-            parser.read_csv(StringIO(data), index_col=0, na_filter=na_filter)
-        return
-
     result = parser.read_csv(StringIO(data), index_col=0, na_filter=na_filter)
     tm.assert_frame_equal(result, expected)

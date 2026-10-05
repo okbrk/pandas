@@ -154,13 +154,11 @@ PyObject *JSONToObj(PyObject *Py_UNUSED(self), PyObject *args,
   }
 
   if (dec.errorStr) {
-    if (dec.errorOffset != NULL && dec.errorOffset >= buf &&
-        dec.errorOffset <= buf + len) {
-      Py_ssize_t pos = (Py_ssize_t)(dec.errorOffset - buf);
-      PyErr_Format(PyExc_ValueError, "%s at position %zd", dec.errorStr, pos);
-    } else {
-      PyErr_Format(PyExc_ValueError, "%s", dec.errorStr);
-    }
+    /*
+    FIXME: It's possible to give a much nicer error message here with actual
+    failing element in input etc*/
+
+    PyErr_Format(PyExc_ValueError, "%s", dec.errorStr);
 
     if (ret) {
       Py_DECREF((PyObject *)ret);

@@ -12,7 +12,6 @@ import numpy as np
 
 from pandas._libs import missing as libmissing
 from pandas._libs.sparse import IntIndex
-from pandas.util._decorators import set_module
 
 from pandas.core.dtypes.common import (
     is_integer_dtype,
@@ -23,7 +22,6 @@ from pandas.core.dtypes.common import (
 from pandas.core.dtypes.dtypes import (
     ArrowDtype,
     CategoricalDtype,
-    SparseDtype,
 )
 
 from pandas.core.arrays import SparseArray
@@ -40,7 +38,6 @@ if TYPE_CHECKING:
     from pandas._typing import NpDtype
 
 
-@set_module("pandas")
 def get_dummies(
     data,
     prefix=None,
@@ -63,15 +60,13 @@ def get_dummies(
     data : array-like, Series, or DataFrame
         Data of which to get dummy indicators.
     prefix : str, list of str, or dict of str, default None
-        A string to be prepended to DataFrame column names.
+        String to append DataFrame column names.
         Pass a list with length equal to the number of columns
         when calling get_dummies on a DataFrame. Alternatively, `prefix`
         can be a dictionary mapping column names to prefixes.
-    prefix_sep : str, list of str, or dict of str, default '_'
-        Should you choose to prepend DataFrame column names with a prefix, this
-        is the separator/delimiter to use between the two. Alternatively,
-        `prefix_sep` can be a list with length equal to the number of columns,
-        or a dictionary mapping column names to separators.
+    prefix_sep : str, default '_'
+        If appending prefix, separator/delimiter to use. Or pass a
+        list or dictionary as with `prefix`.
     dummy_na : bool, default False
         If True, a NaN indicator column will be added even if no NaN values are present.
         If False, NA values are encoded as all zero.
@@ -157,51 +152,15 @@ def get_dummies(
     0  1.0  0.0  0.0
     1  0.0  1.0  0.0
     2  0.0  0.0  1.0
-
-    Unobserved categories of a categorical input are included:
-
-    >>> pd.get_dummies(pd.Categorical(list("aca"), categories=["a", "b", "c"]))
-           a      b      c
-    0   True  False  False
-    1  False  False   True
-    2   True  False  False
     """
     from pandas.core.reshape.concat import concat
 
-    def _is_encodable(arr) -> bool:
-        # The columns get_dummies encodes by default: object, string (any
-        # storage), categorical, the Arrow-backed string/dictionary
-        # equivalents (GH#56273), and other Arrow types whose numpy fallback
-        # is object (binary, decimal, time32/time64, ...).
-        dtype = arr.dtype
-        if isinstance(dtype, (StringDtype, CategoricalDtype)):
-            return True
-        if isinstance(dtype, ArrowDtype):
-            import pyarrow as pa
-
-            pa_type = dtype.pyarrow_dtype
-            if (
-                pa.types.is_string(pa_type)
-                or pa.types.is_large_string(pa_type)
-                or pa.types.is_dictionary(pa_type)
-                or pa.types.is_string_view(pa_type)
-            ):
-                return True
-            # Arrow types whose numpy fallback is object (e.g. binary,
-            # decimal, time32/time64) were encoded before GH#66091 decoupled
-            # this from select_dtypes(include="object"); keep encoding them.
-            return dtype.numpy_dtype == np.dtype(object)
-        # is_object_dtype last: it raises for ArrowDtypes whose `.type` is
-        # not implemented (handled above)
-        return is_object_dtype(dtype)
+    dtypes_to_encode = ["object", "string", "category"]
 
     if isinstance(data, DataFrame):
         # determine columns being encoded
         if columns is None:
-            mgr = data._mgr._get_data_subset(_is_encodable).copy(deep=False)
-            data_to_encode = data._constructor_from_mgr(
-                mgr, axes=mgr.axes
-            ).__finalize__(data)
+            data_to_encode = data.select_dtypes(include=dtypes_to_encode)
         elif not is_list_like(columns):
             raise TypeError("Input must be a list-like for parameter `columns`")
         else:
@@ -222,7 +181,7 @@ def get_dummies(
         check_len(prefix_sep, "prefix_sep")
 
         if isinstance(prefix, str):
-            prefix = itertools.repeat(prefix, len(data_to_encode.columns))
+            prefix = itertools.cycle([prefix])
         if isinstance(prefix, dict):
             prefix = [prefix[col] for col in data_to_encode.columns]
 
@@ -231,7 +190,7 @@ def get_dummies(
 
         # validate separators
         if isinstance(prefix_sep, str):
-            prefix_sep = itertools.repeat(prefix_sep, len(data_to_encode.columns))
+            prefix_sep = itertools.cycle([prefix_sep])
         elif isinstance(prefix_sep, dict):
             prefix_sep = [prefix_sep[col] for col in data_to_encode.columns]
 
@@ -246,18 +205,9 @@ def get_dummies(
         else:
             # Encoding only object and category dtype columns. Get remaining
             # columns to prepend to result.
-            rest_mgr = data._mgr._get_data_subset(
-                lambda arr: not _is_encodable(arr)
-            ).copy(deep=False)
-            with_dummies = [
-                data._constructor_from_mgr(rest_mgr, axes=rest_mgr.axes).__finalize__(
-                    data
-                )
-            ]
+            with_dummies = [data.select_dtypes(exclude=dtypes_to_encode)]
 
-        for col, pre, sep in zip(
-            data_to_encode.items(), prefix, prefix_sep, strict=True
-        ):
+        for col, pre, sep in zip(data_to_encode.items(), prefix, prefix_sep):
             # col is (column_name, column), use just column data here
             dummy = _get_dummies_1d(
                 col[1],
@@ -366,12 +316,12 @@ def _get_dummies_1d(
 
         sparse_series = []
         N = len(data)
-        sp_indices: list[list[int]] = [[] for _ in range(len(dummy_cols))]
+        sp_indices: list[list] = [[] for _ in range(len(dummy_cols))]
         mask = codes != -1
         codes = codes[mask]
         n_idx = np.arange(N)[mask]
 
-        for ndx, code in zip(n_idx, codes, strict=True):
+        for ndx, code in zip(n_idx, codes):
             sp_indices[code].append(ndx)
 
         if drop_first:
@@ -379,11 +329,13 @@ def _get_dummies_1d(
             # GH12042
             sp_indices = sp_indices[1:]
             dummy_cols = dummy_cols[1:]
-        for col, ixs in zip(dummy_cols, sp_indices, strict=True):
-            sp_values = np.ones(len(ixs), dtype=dtype)
-            sp_index = IntIndex(N, ixs)
-            sparse_dtype = SparseDtype(sp_values.dtype, fill_value)
-            sarr = SparseArray._simple_new(sp_values, sp_index, sparse_dtype)
+        for col, ixs in zip(dummy_cols, sp_indices):
+            sarr = SparseArray(
+                np.ones(len(ixs), dtype=dtype),
+                sparse_index=IntIndex(N, ixs),
+                fill_value=fill_value,
+                dtype=dtype,
+            )
             sparse_series.append(Series(data=sarr, index=index, name=col, copy=False))
 
         return concat(sparse_series, axis=1)
@@ -410,16 +362,17 @@ def _get_dummies_1d(
         return DataFrame(dummy_mat, index=index, columns=dummy_cols, dtype=_dtype)
 
 
-@set_module("pandas")
 def from_dummies(
     data: DataFrame,
-    sep: str | None = None,
-    default_category: Hashable | dict[str, Hashable] | None = None,
+    sep: None | str = None,
+    default_category: None | Hashable | dict[str, Hashable] = None,
 ) -> DataFrame:
     """
     Create a categorical ``DataFrame`` from a ``DataFrame`` of dummy variables.
 
     Inverts the operation performed by :func:`~pandas.get_dummies`.
+
+    .. versionadded:: 1.5.0
 
     Parameters
     ----------
@@ -435,9 +388,7 @@ def from_dummies(
         The default category is the implied category when a value has none of the
         listed categories specified with a one, i.e. if all dummies in a row are
         zero. Can be a single value for all variables or a dict directly mapping
-        the default categories to a prefix of a variable. The default category
-        will be coerced to the dtype of ``data.columns`` if such coercion is
-        lossless, and will raise otherwise.
+        the default categories to a prefix of a variable.
 
     Returns
     -------
@@ -544,7 +495,8 @@ def from_dummies(
 
     if col_isna_mask.any():
         raise ValueError(
-            f"Dummy DataFrame contains NA value in column: '{col_isna_mask.idxmax()}'"
+            "Dummy DataFrame contains NA value in column: "
+            f"'{col_isna_mask.idxmax()}'"
         )
 
     # index data with a list of all columns that are dummies
@@ -580,11 +532,7 @@ def from_dummies(
                 raise ValueError(len_msg)
         elif isinstance(default_category, Hashable):
             default_category = dict(
-                zip(
-                    variables_slice,
-                    [default_category] * len(variables_slice),
-                    strict=True,
-                )
+                zip(variables_slice, [default_category] * len(variables_slice))
             )
         else:
             raise TypeError(

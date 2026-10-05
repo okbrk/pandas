@@ -46,7 +46,7 @@ Some other important things to know about the docs:
   instructions on how to write a correct docstring.
 
   .. toctree::
-     :maxdepth: 1
+     :maxdepth: 2
 
      contributing_docstring.rst
 
@@ -93,9 +93,14 @@ Some other important things to know about the docs:
   ``doc/source/reference``, else Sphinx
   will emit a warning.
 
-Docstring validation — both standard numpydoc checks and pandas-specific conventions
-— is enforced automatically during the Sphinx
-documentation build via ``numpydoc_validation_checks`` in ``doc/source/conf.py``.
+The utility script ``scripts/validate_docstrings.py`` can be used to get a csv
+summary of the API documentation. And also validate common errors in the docstring
+of a specific class, function or method. The summary also compares the list of
+methods documented in the files in ``doc/source/reference`` (which is used to generate
+the `API Reference <https://pandas.pydata.org/pandas-docs/stable/api.html>`_ page)
+and the actual public methods.
+This will identify methods documented in ``doc/source/reference`` that are not actually
+class methods, and existing methods that are not documented in ``doc/source/reference``.
 
 
 Updating a pandas docstring
@@ -103,19 +108,19 @@ Updating a pandas docstring
 
 When improving a single function or method's docstring, it is not necessarily
 needed to build the full documentation (see next section).
-You can validate a single docstring — including both standard numpydoc checks and
-pandas-specific conventions (GL04, PD01, SA05, EX04) — by building a single-page
-doc::
+However, there is a script that checks a docstring (for example for the ``DataFrame.mean`` method)::
 
-    python doc/make.py --warnings-are-errors --no-browser --single pandas.DataFrame.mean
+    python scripts/validate_docstrings.py pandas.DataFrame.mean
 
+This script will indicate some formatting errors if present, and will also
+run and test the examples included in the docstring.
 Check the :ref:`pandas docstring guide <docstring>` for a detailed guide
 on how to format the docstring.
 
 The examples in the docstring ('doctests') must be valid Python code,
 that in a deterministic way returns the presented output, and that can be
 copied and run by users. This can be checked with the script above, and is
-also tested by GitHub Actions. A failing doctest will be a blocker for merging a PR.
+also tested on Travis. A failing doctest will be a blocker for merging a PR.
 Check the :ref:`examples <docstring.examples>` section in the docstring guide
 for some tips and tricks to get the doctests passing.
 
@@ -151,11 +156,6 @@ If you want to do a full clean build, do::
 
     python make.py clean
     python make.py html
-
-.. tip::
-  If ``python make.py html`` exits with an error status,
-  try running the command ``python make.py html --num-jobs=1``
-  to identify the cause of the error.
 
 You can tell ``make.py`` to compile only a single section of the docs, greatly
 reducing the turn-around time for checking your changes.
@@ -199,7 +199,7 @@ Building main branch documentation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When pull requests are merged into the pandas ``main`` branch, the main parts of
-the documentation are also built by GitHub Actions. These docs are then hosted `here
+the documentation are also built by Travis-CI. These docs are then hosted `here
 <https://pandas.pydata.org/docs/dev/>`__, see also
 the :any:`Continuous Integration <contributing.ci>` section.
 

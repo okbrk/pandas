@@ -21,10 +21,8 @@
 .noseids
 .ipynb_checkpoints
 .tags
-tags
 .cache/
 .vscode/
-.pixi/
 
 # Compiled source #
 ###################
@@ -46,11 +44,11 @@ debug
 
 # Python files #
 ################
-# meson working directory
+# setup.py working directory
 build
 # sphinx build directory
 doc/_build
-# dist directory
+# setup.py dist directory
 dist
 # Egg metadata
 *.egg-info
@@ -77,17 +75,13 @@ coverage_html_report
 .mypy_cache
 *.pytest_cache
 .ruff_cache
+# hypothesis test database
+.hypothesis/
 __pycache__
 # pytest-monkeytype
 monkeytype.sqlite3
 # meson editable install folder
 .mesonpy
-
-### Meson files ###
-# subproject directories
-/subprojects/*
-!/subprojects/*.wrap
-!/subprojects/packagefiles
 
 
 # OS generated files #
@@ -108,12 +102,22 @@ pandas/io/*.dat
 pandas/io/*.json
 scikits
 
+# Generated Sources #
+#####################
+!skts.c
+*.c
+*.cpp
+!pandas/_libs/src/**/*.c
+!pandas/_libs/src/**/*.h
+!pandas/_libs/include/**/*.h
+
 # Unit / Performance Testing #
 ##############################
 asv_bench/env/
 asv_bench/html/
 asv_bench/results/
 asv_bench/pandas/
+test-data.xml
 
 # Documentation generated files #
 #################################
@@ -133,7 +137,3 @@ doc/source/savefig/
 # Interactive terminal generated files #
 ########################################
 .jupyterlite.doit.db
-
-# Pyodide/WASM related files #
-##############################
-/.pyodide-xbuildenv-*

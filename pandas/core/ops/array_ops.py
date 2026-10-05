@@ -53,16 +53,10 @@ from pandas.core.dtypes.missing import (
 
 from pandas.core import roperator
 from pandas.core.computation import expressions
-from pandas.core.construction import (
-    ensure_wrapped_if_datetimelike,
-    sanitize_array,
-)
+from pandas.core.construction import ensure_wrapped_if_datetimelike
 from pandas.core.ops import missing
 from pandas.core.ops.dispatch import should_extension_dispatch
-from pandas.core.ops.invalid import (
-    disallow_datetimelike_logical_op,
-    invalid_comparison,
-)
+from pandas.core.ops.invalid import invalid_comparison
 
 if TYPE_CHECKING:
     from pandas._typing import (
@@ -170,7 +164,7 @@ def _masked_arith_op(x: np.ndarray, y, op) -> np.ndarray:
     else:
         if not is_scalar(y):
             raise TypeError(
-                f"Cannot broadcast np.ndarray with operand of type {type(y)}"
+                f"Cannot broadcast np.ndarray with operand of type { type(y) }"
             )
 
         # mask is only meaningful for x
@@ -203,7 +197,7 @@ def _na_arithmetic_op(left: np.ndarray, right, op, is_cmp: bool = False):
     right : np.ndarray or scalar
         Excludes DataFrame, Series, Index, ExtensionArray.
     is_cmp : bool, default False
-        If this is a comparison operation.
+        If this a comparison operation.
 
     Returns
     -------
@@ -267,10 +261,6 @@ def arithmetic_op(left: ArrayLike, right: Any, op):
     #  and `maybe_prepare_scalar_for_op` has already been called on `right`
     # We need to special-case datetime64/timedelta64 dtypes (e.g. because numpy
     # casts integer dtypes to timedelta64 when operating with timedelta64 - GH#22390)
-    if isinstance(right, list):
-        # GH#62423
-        right = sanitize_array(right, None)
-    right = ensure_wrapped_if_datetimelike(right)
 
     if (
         should_extension_dispatch(left, right)
@@ -317,17 +307,12 @@ def comparison_op(left: ArrayLike, right: Any, op) -> ArrayLike:
     rvalues = ensure_wrapped_if_datetimelike(right)
 
     rvalues = lib.item_from_zerodim(rvalues)
-
-    # Special handling needed if rvalues is a zerodim np.ndarray subclass, see GH#63205
-    rvalues_is_zerodim: bool = getattr(rvalues, "ndim", None) == 0
-
     if isinstance(rvalues, list):
         # We don't catch tuple here bc we may be comparing e.g. MultiIndex
         #  to a tuple that represents a single entry, see test_compare_tuple_strs
-        rvalues = sanitize_array(rvalues, None)
-    rvalues = ensure_wrapped_if_datetimelike(rvalues)
+        rvalues = np.asarray(rvalues)
 
-    if isinstance(rvalues, (np.ndarray, ABCExtensionArray)) and not rvalues_is_zerodim:
+    if isinstance(rvalues, (np.ndarray, ABCExtensionArray)):
         # TODO: make this treatment consistent across ops and classes.
         #  We are not catching all listlikes here (e.g. frozenset, tuple)
         #  The ambiguous case is object-dtype.  See GH#27803
@@ -343,8 +328,7 @@ def comparison_op(left: ArrayLike, right: Any, op) -> ArrayLike:
         # Call the method on lvalues
         res_values = op(lvalues, rvalues)
 
-    # TODO: but not pd.NA?
-    elif (is_scalar(rvalues) or rvalues_is_zerodim) and isna(rvalues):
+    elif is_scalar(rvalues) and isna(rvalues):  # TODO: but not pd.NA?
         # numpy does not like comparisons vs None
         if op is operator.ne:
             res_values = np.ones(lvalues.shape, dtype=bool)
@@ -450,8 +434,6 @@ def logical_op(left: ArrayLike, right: Any, op) -> ArrayLike:
     lvalues = ensure_wrapped_if_datetimelike(left)
     rvalues = right
 
-    disallow_datetimelike_logical_op(lvalues, rvalues, op)
-
     if should_extension_dispatch(lvalues, rvalues):
         # Call the method on lvalues
         res_values = op(lvalues, rvalues)
@@ -555,9 +537,7 @@ def maybe_prepare_scalar_for_op(obj, shape: Shape):
             # Avoid possible ambiguities with pd.NaT
             # GH 52295
             if is_unitless(obj.dtype):
-                # Use second resolution to ensure that the result of e.g.
-                #  `left - np.datetime64("NaT")` retains the unit of left.unit
-                obj = obj.astype("datetime64[s]")
+                obj = obj.astype("datetime64[ns]")
             elif not is_supported_dtype(obj.dtype):
                 new_dtype = get_supported_dtype(obj.dtype)
                 obj = obj.astype(new_dtype)
@@ -575,9 +555,7 @@ def maybe_prepare_scalar_for_op(obj, shape: Shape):
             #  we broadcast and wrap in a TimedeltaArray
             # GH 52295
             if is_unitless(obj.dtype):
-                # Use second resolution to ensure that the result of e.g.
-                #  `left + np.timedelta64("NaT")` retains the unit of left.unit
-                obj = obj.astype("timedelta64[s]")
+                obj = obj.astype("timedelta64[ns]")
             elif not is_supported_dtype(obj.dtype):
                 new_dtype = get_supported_dtype(obj.dtype)
                 obj = obj.astype(new_dtype)
@@ -607,8 +585,6 @@ _BOOL_OP_NOT_ALLOWED = {
     roperator.rfloordiv,
     operator.pow,
     roperator.rpow,
-    divmod,
-    roperator.rdivmod,
 }
 
 

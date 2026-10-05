@@ -10,13 +10,13 @@ import re
 import sys
 from typing import (
     TYPE_CHECKING,
-    Any,
     Literal,
+    Union,
     cast,
 )
 import warnings
 
-from pandas._libs import lib
+from pandas.compat import PY311
 
 if TYPE_CHECKING:
     from collections.abc import (
@@ -27,13 +27,13 @@ if TYPE_CHECKING:
 
 @contextmanager
 def assert_produces_warning(
-    expected_warning: type[Warning] | bool | tuple[type[Warning], ...] | None,
+    expected_warning: type[Warning] | bool | tuple[type[Warning], ...] | None = Warning,
     filter_level: Literal[
         "error", "ignore", "always", "default", "module", "once"
     ] = "always",
     check_stacklevel: bool = True,
     raise_on_extra_warnings: bool = True,
-    match: str | tuple[str | None, ...] | lib.NoDefault | None = lib.no_default,
+    match: str | tuple[str | None, ...] | None = None,
     must_find_all_warnings: bool = True,
 ) -> Generator[list[warnings.WarningMessage]]:
     """
@@ -44,7 +44,7 @@ def assert_produces_warning(
 
     Parameters
     ----------
-    expected_warning : {Warning, False, tuple[Warning, ...], None}
+    expected_warning : {Warning, False, tuple[Warning, ...], None}, default Warning
         The type of Exception raised. ``exception.Warning`` is the base
         class for all warnings. To raise multiple types of exceptions,
         pass them as a tuple. To check that no warning is returned,
@@ -70,10 +70,8 @@ def assert_produces_warning(
     raise_on_extra_warnings : bool, default True
         Whether extra warnings not of the type `expected_warning` should
         cause the test to fail.
-    match : {str, tuple[str, ...]} or None
-        Match warning message. Required whenever a warning is expected; pass
-        ``match=None`` to opt out when the message genuinely cannot be
-        asserted. If it's a tuple, it has to be the size of
+    match : {str, tuple[str, ...]}, optional
+        Match warning message. If it's a tuple, it has to be the size of
         `expected_warning`. If additionally `must_find_all_warnings` is
         True, each expected warning's message gets matched with a respective
         match. Otherwise, multiple values get treated as an alternative.
@@ -85,14 +83,14 @@ def assert_produces_warning(
     Examples
     --------
     >>> import warnings
-    >>> with assert_produces_warning(UserWarning, match="hello"):
-    ...     warnings.warn(UserWarning("hello"))
+    >>> with assert_produces_warning():
+    ...     warnings.warn(UserWarning())
     >>> with assert_produces_warning(False):
     ...     warnings.warn(RuntimeWarning())
     Traceback (most recent call last):
         ...
     AssertionError: Caused unexpected warning(s): ['RuntimeWarning'].
-    >>> with assert_produces_warning(UserWarning, match="hello"):
+    >>> with assert_produces_warning(UserWarning):
     ...     warnings.warn(RuntimeWarning())
     Traceback (most recent call last):
         ...
@@ -101,15 +99,6 @@ def assert_produces_warning(
     ..warn:: This is *not* thread-safe.
     """
     __tracebackhide__ = True
-
-    if match is lib.no_default:
-        if expected_warning:
-            raise TypeError(
-                "assert_produces_warning() requires a match argument so the "
-                "warning message is checked and not just its class. Pass "
-                "match=None if the message genuinely cannot be asserted here."
-            )
-        match = None
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter(filter_level)
@@ -123,9 +112,7 @@ def assert_produces_warning(
                         if isinstance(match, tuple)
                         else (match,) * len(expected_warning)
                     )
-                    for warning_type, warning_match in zip(
-                        expected_warning, match, strict=True
-                    ):
+                    for warning_type, warning_match in zip(expected_warning, match):
                         _assert_caught_expected_warnings(
                             caught_warnings=w,
                             expected_warning=warning_type,
@@ -134,7 +121,7 @@ def assert_produces_warning(
                         )
                 else:
                     expected_warning = cast(
-                        "type[Warning] | tuple[type[Warning], ...]",
+                        Union[type[Warning], tuple[type[Warning], ...]],
                         expected_warning,
                     )
                     match = (
@@ -156,17 +143,13 @@ def assert_produces_warning(
 
 
 def maybe_produces_warning(
-    warning: type[Warning],
-    condition: bool,
-    *,
-    match: str | tuple[str | None, ...] | None,
-    **kwargs: Any,
-) -> AbstractContextManager[list[warnings.WarningMessage] | None]:
+    warning: type[Warning], condition: bool, **kwargs
+) -> AbstractContextManager:
     """
     Return a context manager that possibly checks a warning based on the condition
     """
     if condition:
-        return assert_produces_warning(warning, match=match, **kwargs)
+        return assert_produces_warning(warning, **kwargs)
     else:
         return nullcontext()
 
@@ -233,7 +216,7 @@ def _assert_caught_no_extra_warnings(
                 # due to these open files.
                 if any("matplotlib" in mod for mod in sys.modules):
                     continue
-            if actual_warning.category == EncodingWarning:
+            if PY311 and actual_warning.category == EncodingWarning:
                 # EncodingWarnings are checked in the CI
                 # pyproject.toml errors on EncodingWarnings in pandas
                 # Ignore EncodingWarnings from other libraries
@@ -258,7 +241,7 @@ def _is_unexpected_warning(
     """Check if the actual warning issued is unexpected."""
     if actual_warning and not expected_warning:
         return True
-    expected_warning = cast("type[Warning]", expected_warning)
+    expected_warning = cast(type[Warning], expected_warning)
     return bool(not issubclass(actual_warning.category, expected_warning))
 
 

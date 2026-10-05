@@ -1,9 +1,10 @@
 import pandas as pd
+from pandas.core.arrays import period_array
 
 
 class TestReductions:
     def test_min_max(self):
-        arr = pd.PeriodIndex(
+        arr = period_array(
             [
                 "2000-01-03",
                 "2000-01-03",
@@ -13,7 +14,7 @@ class TestReductions:
                 "2000-01-04",
             ],
             freq="D",
-        ).array
+        )
 
         result = arr.min()
         expected = pd.Period("2000-01-02", freq="D")
@@ -30,7 +31,7 @@ class TestReductions:
         assert result is pd.NaT
 
     def test_min_max_empty(self, skipna):
-        arr = pd.PeriodIndex([], freq="D").array
+        arr = period_array([], freq="D")
         result = arr.min(skipna=skipna)
         assert result is pd.NaT
 

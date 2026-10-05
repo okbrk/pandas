@@ -11,7 +11,6 @@ from typing import (
     TYPE_CHECKING,
     Any,
     Literal,
-    TypeGuard,
     TypeVar,
     overload,
 )
@@ -26,7 +25,7 @@ from pandas.core.dtypes.common import (
 if TYPE_CHECKING:
     from pandas.io.excel._base import ExcelWriter
 
-    ExcelWriter_t = type[ExcelWriter[Any]]
+    ExcelWriter_t = type[ExcelWriter]
     usecols_func = TypeVar("usecols_func", bound=Callable[[Hashable], object])
 
 _writers: MutableMapping[str, ExcelWriter_t] = {}
@@ -86,12 +85,6 @@ def get_default_engine(ext: str, mode: Literal["reader", "writer"] = "reader") -
             _default_writers["xlsx"] = "xlsxwriter"
         return _default_writers[ext]
     else:
-        # Fall back to calamine if the deprecated default engine
-        # is not installed (GH#56542)
-        if ext == "xls" and not import_optional_dependency("xlrd", errors="ignore"):
-            _default_readers["xls"] = "calamine"
-        if ext == "xlsb" and not import_optional_dependency("pyxlsb", errors="ignore"):
-            _default_readers["xlsb"] = "calamine"
         return _default_readers[ext]
 
 
@@ -185,7 +178,7 @@ def maybe_convert_usecols(usecols: None) -> None: ...
 
 def maybe_convert_usecols(
     usecols: str | list[int] | list[str] | usecols_func | None,
-) -> list[int] | list[str] | usecols_func | None:
+) -> None | list[int] | list[str] | usecols_func:
     """
     Convert `usecols` into a compatible format for parsing in `parsers.py`.
 
@@ -214,9 +207,15 @@ def maybe_convert_usecols(
     return usecols
 
 
-def validate_freeze_panes(
-    freeze_panes: tuple[int, int] | None,
-) -> TypeGuard[tuple[int, int]]:
+@overload
+def validate_freeze_panes(freeze_panes: tuple[int, int]) -> Literal[True]: ...
+
+
+@overload
+def validate_freeze_panes(freeze_panes: None) -> Literal[False]: ...
+
+
+def validate_freeze_panes(freeze_panes: tuple[int, int] | None) -> bool:
     if freeze_panes is not None:
         if len(freeze_panes) == 2 and all(
             isinstance(item, int) for item in freeze_panes
@@ -239,7 +238,7 @@ def fill_mi_header(
     """
     Forward fill blank entries in row but only inside the same parent index.
 
-    Used for creating headers in MultiIndex.
+    Used for creating headers in Multiindex.
 
     Parameters
     ----------
@@ -280,7 +279,6 @@ def pop_header_name(
         The data row to parse for the header name.
     index_col : int, list
         The index columns for our data. Assumed to be non-null.
-        If a list is passed, the maximum ``index_col`` value is used.
 
     Returns
     -------
@@ -300,12 +298,10 @@ def pop_header_name(
     header_name = row[i]
     header_name = None if header_name == "" else header_name
 
-    return header_name, [*row[:i], "", *row[i + 1 :]]
+    return header_name, row[:i] + [""] + row[i + 1 :]
 
 
-def combine_kwargs(
-    engine_kwargs: dict[str, Any] | None, kwargs: dict[str, Any]
-) -> dict[str, Any]:
+def combine_kwargs(engine_kwargs: dict[str, Any] | None, kwargs: dict) -> dict:
     """
     Used to combine two sources of kwargs for the backend engine.
 
@@ -318,7 +314,7 @@ def combine_kwargs(
     engine_kwargs: dict
         kwargs to be passed through to the engine.
     kwargs: dict
-        kwargs to be passed through to the engine (deprecated)
+        kwargs to be psased through to the engine (deprecated)
 
     Returns
     -------

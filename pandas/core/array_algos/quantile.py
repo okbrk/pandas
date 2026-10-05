@@ -36,13 +36,7 @@ def quantile_compat(
     if isinstance(values, np.ndarray):
         fill_value = na_value_for_dtype(values.dtype, compat=False)
         mask = isna(values)
-        return quantile_with_mask(
-            values,
-            mask,
-            fill_value,  # pyright: ignore[reportArgumentType]
-            qs,
-            interpolation,
-        )
+        return quantile_with_mask(values, mask, fill_value, qs, interpolation)
     else:
         return values._quantile(qs, interpolation)
 
@@ -50,7 +44,7 @@ def quantile_compat(
 def quantile_with_mask(
     values: np.ndarray,
     mask: npt.NDArray[np.bool_],
-    fill_value: Scalar,
+    fill_value,
     qs: npt.NDArray[np.float64],
     interpolation: str,
 ) -> np.ndarray:
@@ -162,10 +156,10 @@ def _nanquantile(
     values: np.ndarray,
     qs: npt.NDArray[np.float64],
     *,
-    na_value: Scalar,
+    na_value,
     mask: npt.NDArray[np.bool_],
     interpolation: str,
-) -> np.ndarray:
+):
     """
     Wrapper for np.quantile that skips missing values.
 
@@ -189,7 +183,7 @@ def _nanquantile(
         result = _nanquantile(
             values.view("i8"),
             qs=qs,
-            na_value=na_value.view("i8"),  # type: ignore[union-attr, arg-type]
+            na_value=na_value.view("i8"),
             mask=mask,
             interpolation=interpolation,
         )
@@ -201,15 +195,15 @@ def _nanquantile(
     if mask.any():
         # Caller is responsible for ensuring mask shape match
         assert mask.shape == values.shape
-        result_list = [
+        result = [
             _nanquantile_1d(val, m, qs, na_value, interpolation=interpolation)
-            for (val, m) in zip(list(values), list(mask), strict=True)
+            for (val, m) in zip(list(values), list(mask))
         ]
         if values.dtype.kind == "f":
             # preserve itemsize
-            result = np.asarray(result_list, dtype=values.dtype).T
+            result = np.asarray(result, dtype=values.dtype).T
         else:
-            result = np.asarray(result_list).T
+            result = np.asarray(result).T
             if (
                 result.dtype != values.dtype
                 and not mask.all()

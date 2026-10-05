@@ -8,7 +8,11 @@ import pytest
 
 import pandas.util._test_decorators as td
 
-import pandas as pd
+from pandas import (
+    DataFrame,
+    Series,
+    bdate_range,
+)
 
 
 @pytest.fixture(params=[True, False])
@@ -101,16 +105,16 @@ def series():
     arr = np.random.default_rng(2).standard_normal(100)
     locs = np.arange(20, 40)
     arr[locs] = np.nan
-    series = pd.Series(arr, index=pd.bdate_range(datetime(2009, 1, 1), periods=100))
+    series = Series(arr, index=bdate_range(datetime(2009, 1, 1), periods=100))
     return series
 
 
 @pytest.fixture
 def frame():
     """Make mocked frame as fixture."""
-    return pd.DataFrame(
+    return DataFrame(
         np.random.default_rng(2).standard_normal((100, 10)),
-        index=pd.bdate_range(datetime(2009, 1, 1), periods=100),
+        index=bdate_range(datetime(2009, 1, 1), periods=100),
     )
 
 

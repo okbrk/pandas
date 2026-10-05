@@ -105,7 +105,7 @@ class DocBuilder:
     @staticmethod
     def _run_os(*args) -> None:
         """
-        Execute a command as an OS terminal.
+        Execute a command as a OS terminal.
 
         Parameters
         ----------
@@ -148,16 +148,11 @@ class DocBuilder:
             SOURCE_PATH,
             os.path.join(BUILD_PATH, kind),
         ]
-        # sphinx-build calls locale.setlocale(locale.LC_ALL, '') on startup,
-        # which adopts the system locale. We force the C locale here to ensure
-        # doc examples relying on C locale formatting (e.g. date/number formatting)
-        # build consistently regardless of the local machine.
-        env = {**os.environ, "LC_ALL": "C"}
-        return subprocess.call(cmd, env=env)
+        return subprocess.call(cmd)
 
     def _open_browser(self, single_doc_html) -> None:
         """
-        Open a browser tab showing a single document.
+        Open a browser tab showing single
         """
         url = os.path.join("file://", DOC_PATH, "build", "html", single_doc_html)
         webbrowser.open(url, new=2)
@@ -194,16 +189,13 @@ class DocBuilder:
         Create in the build directory an html file with a redirect,
         for every row in REDIRECTS_FILE.
         """
-        html_path = os.path.join(BUILD_PATH, "html")
-        # some redirects are to files in the generated folder, so ensure this exists
-        os.makedirs(os.path.join(html_path, "generated"), exist_ok=True)
-
         with open(REDIRECTS_FILE, encoding="utf-8") as mapping_fd:
             reader = csv.reader(mapping_fd)
             for row in reader:
                 if not row or row[0].strip().startswith("#"):
                     continue
 
+                html_path = os.path.join(BUILD_PATH, "html")
                 path = os.path.join(html_path, *row[0].split("/")) + ".html"
 
                 if not self.include_api and (
@@ -268,7 +260,8 @@ class DocBuilder:
                 for i in range(3):
                     self._run_os("pdflatex", "-interaction=nonstopmode", "pandas.tex")
                 raise SystemExit(
-                    'You should check the file "build/latex/pandas.pdf" for problems.'
+                    "You should check the file "
+                    '"build/latex/pandas.pdf" for problems.'
                 )
             self._run_os("make")
             return ret_code
@@ -350,7 +343,8 @@ def main():
         dest="verbosity",
         default=0,
         help=(
-            "increase verbosity (can be repeated), passed to the sphinx build command"
+            "increase verbosity (can be repeated), "
+            "passed to the sphinx build command"
         ),
     )
     argparser.add_argument(

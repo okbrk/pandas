@@ -24,7 +24,8 @@ class FloatAttrDtype(ExtensionDtype):
     name = "float_attr"
     na_value = np.nan
 
-    def construct_array_type(self) -> type_t[FloatAttrArray]:
+    @classmethod
+    def construct_array_type(cls) -> type_t[FloatAttrArray]:
         """
         Return the array type associated with this dtype.
 

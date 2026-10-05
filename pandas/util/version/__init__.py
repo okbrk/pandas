@@ -13,7 +13,7 @@ from typing import (
     Any,
     NamedTuple,
     SupportsInt,
-    TypeAlias,
+    Union,
 )
 
 __all__ = ["VERSION_PATTERN", "InvalidVersion", "Version", "parse"]
@@ -77,14 +77,14 @@ class NegativeInfinityType:
 NegativeInfinity = NegativeInfinityType()
 
 
-LocalType: TypeAlias = tuple[int | str, ...]
+LocalType = tuple[Union[int, str], ...]
 
-CmpPrePostDevType: TypeAlias = InfinityType | NegativeInfinityType | tuple[str, int]
-CmpLocalType: TypeAlias = (
-    NegativeInfinityType
-    | tuple[tuple[int, str] | tuple[NegativeInfinityType, int | str], ...]
-)
-CmpKey: TypeAlias = tuple[
+CmpPrePostDevType = Union[InfinityType, NegativeInfinityType, tuple[str, int]]
+CmpLocalType = Union[
+    NegativeInfinityType,
+    tuple[Union[tuple[int, str], tuple[NegativeInfinityType, Union[int, str]]], ...],
+]
+CmpKey = tuple[
     int,
     tuple[int, ...],
     CmpPrePostDevType,
@@ -92,7 +92,7 @@ CmpKey: TypeAlias = tuple[
     CmpPrePostDevType,
     CmpLocalType,
 ]
-VersionComparisonMethod: TypeAlias = Callable[[CmpKey, CmpKey], bool]
+VersionComparisonMethod = Callable[[CmpKey, CmpKey], bool]
 
 
 class _Version(NamedTuple):
@@ -128,8 +128,6 @@ class InvalidVersion(ValueError):
     Traceback (most recent call last):
     InvalidVersion: Invalid version: '1.'
     """
-
-    __module__ = "pandas.errors"
 
 
 class _BaseVersion:

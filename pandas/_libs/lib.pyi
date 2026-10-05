@@ -1,16 +1,14 @@
 # TODO(npdtypes): Many types specified here can be made more specific/accurate;
 #  the more specific versions are specified in comments
-from collections.abc import (
-    Callable,
-    Generator,
-)
 from decimal import Decimal
 from typing import (
     Any,
+    Callable,
     Final,
+    Generator,
+    Hashable,
     Literal,
     TypeAlias,
-    TypeGuard,
     overload,
 )
 
@@ -19,6 +17,7 @@ import numpy as np
 from pandas._typing import (
     ArrayLike,
     DtypeObj,
+    TypeGuard,
     npt,
 )
 
@@ -59,19 +58,15 @@ def is_time_array(values: np.ndarray, skipna: bool = ...): ...
 def is_date_array(values: np.ndarray, skipna: bool = ...): ...
 def is_datetime_array(values: np.ndarray, skipna: bool = ...): ...
 def is_string_array(values: np.ndarray, skipna: bool = ...): ...
-def is_float_array(values: np.ndarray, skipna: bool = ...): ...
+def is_float_array(values: np.ndarray): ...
 def is_integer_array(values: np.ndarray, skipna: bool = ...): ...
-def is_integer_float_array(values: np.ndarray, skipna: bool = ...): ...
 def is_bool_array(values: np.ndarray, skipna: bool = ...): ...
-def first_non_numeric(values: np.ndarray) -> tuple[object, bool]: ...
 def fast_multiget(
-    mapping: dict[Any, Any],
+    mapping: dict,
     keys: np.ndarray,  # object[:]
     default=...,
 ) -> ArrayLike: ...
-def fast_unique_multiple_list_gen(
-    gen: Generator[list[Any], Any, Any], sort: bool = ...
-) -> list[Any]: ...
+def fast_unique_multiple_list_gen(gen: Generator, sort: bool = ...) -> list: ...
 @overload
 def map_infer(
     arr: np.ndarray,
@@ -124,7 +119,7 @@ def maybe_convert_objects(
 @overload
 def maybe_convert_numeric(
     values: npt.NDArray[np.object_],
-    na_values: set[Any],
+    na_values: set,
     convert_empty: bool = ...,
     coerce_numeric: bool = ...,
     convert_to_masked_nullable: Literal[False] = ...,
@@ -132,7 +127,7 @@ def maybe_convert_numeric(
 @overload
 def maybe_convert_numeric(
     values: npt.NDArray[np.object_],
-    na_values: set[Any],
+    na_values: set,
     convert_empty: bool = ...,
     coerce_numeric: bool = ...,
     *,
@@ -150,7 +145,7 @@ def ensure_string_array(
 def convert_nans_to_NA(
     arr: npt.NDArray[np.object_],
 ) -> npt.NDArray[np.object_]: ...
-def fast_zip(ndarrays: list[np.ndarray]) -> npt.NDArray[np.object_]: ...
+def fast_zip(ndarrays: list) -> npt.NDArray[np.object_]: ...
 
 # TODO: can we be more specific about rows?
 def to_object_array_tuples(rows: object) -> ndarray_obj_2d: ...
@@ -160,7 +155,7 @@ def tuples_to_object_array(
 
 # TODO: can we be more specific about rows?
 def to_object_array(rows: object, min_width: int = ...) -> ndarray_obj_2d: ...
-def dicts_to_array(dicts: list[Any], columns: list[Any]) -> ndarray_obj_2d: ...
+def dicts_to_array(dicts: list, columns: list) -> ndarray_obj_2d: ...
 def maybe_booleans_to_slice(
     mask: npt.NDArray[np.uint8],
 ) -> slice | npt.NDArray[np.uint8]: ...
@@ -168,7 +163,7 @@ def maybe_indices_to_slice(
     indices: npt.NDArray[np.intp],
     max_len: int,
 ) -> slice | npt.NDArray[np.intp]: ...
-def is_all_arraylike(obj: list[Any]) -> bool: ...
+def is_all_arraylike(obj: list) -> bool: ...
 
 # -----------------------------------------------------------------
 # Functions which in reality take memoryviews
@@ -194,6 +189,12 @@ def map_infer_mask(
     na_value: Any = ...,
     dtype: np.dtype = ...,
 ) -> ArrayLike: ...
+def indices_fast(
+    index: npt.NDArray[np.intp],
+    labels: np.ndarray,  # const int64_t[:]
+    keys: list,
+    sorted_labels: list[npt.NDArray[np.int64]],
+) -> dict[Hashable, npt.NDArray[np.intp]]: ...
 def generate_slices(
     labels: np.ndarray,
     ngroups: int,  # const intp_t[:]
@@ -218,22 +219,12 @@ def array_equivalent_object(
     right: npt.NDArray[np.object_],
 ) -> bool: ...
 def has_infs(arr: np.ndarray) -> bool: ...  # const floating[:]
-def has_nans(arr: np.ndarray) -> bool: ...  # const floating[:]
-def all_nans(arr: np.ndarray) -> bool: ...  # const floating[:]
-def array_equivalent_float(
-    left: np.ndarray,
-    right: np.ndarray,
-) -> bool: ...  # const floating[:]
-def array_equivalent_bytes(
-    left: np.ndarray,
-    right: np.ndarray,
-) -> bool: ...
 def has_only_ints_or_nan(arr: np.ndarray) -> bool: ...  # const floating[:]
 def get_reverse_indexer(
     indexer: np.ndarray,  # const intp_t[:]
     length: int,
 ) -> npt.NDArray[np.intp]: ...
-def is_bool_list(obj: list[Any]) -> bool: ...
+def is_bool_list(obj: list) -> bool: ...
 def dtypes_all_equal(types: list[DtypeObj]) -> bool: ...
 def is_range_indexer(
     left: np.ndarray,
@@ -242,8 +233,4 @@ def is_range_indexer(
 def is_sequence_range(
     sequence: np.ndarray,
     step: int,  # np.ndarray[np.int64, ndim=1]
-) -> bool: ...
-def has_sentinel(
-    arr: np.ndarray,  # const signed_int_t[:]
-    sentinel: int,
 ) -> bool: ...

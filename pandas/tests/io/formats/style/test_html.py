@@ -1,4 +1,3 @@
-import pathlib
 from textwrap import (
     dedent,
     indent,
@@ -7,7 +6,11 @@ from textwrap import (
 import numpy as np
 import pytest
 
-import pandas as pd
+from pandas import (
+    DataFrame,
+    MultiIndex,
+    option_context,
+)
 
 jinja2 = pytest.importorskip("jinja2")
 from pandas.io.formats.style import Styler
@@ -15,32 +18,28 @@ from pandas.io.formats.style import Styler
 
 @pytest.fixture
 def env():
-    project_dir = pathlib.Path(__file__).parent.parent.parent.parent.parent.resolve()
-    template_dir = project_dir / "io" / "formats" / "templates"
-    loader = jinja2.FileSystemLoader(template_dir)
+    loader = jinja2.PackageLoader("pandas", "io/formats/templates")
     env = jinja2.Environment(loader=loader, trim_blocks=True)
     return env
 
 
 @pytest.fixture
 def styler():
-    return Styler(pd.DataFrame([[2.61], [2.69]], index=["a", "b"], columns=["A"]))
+    return Styler(DataFrame([[2.61], [2.69]], index=["a", "b"], columns=["A"]))
 
 
 @pytest.fixture
 def styler_mi():
-    midx = pd.MultiIndex.from_product([["a", "b"], ["c", "d"]])
-    return Styler(pd.DataFrame(np.arange(16).reshape(4, 4), index=midx, columns=midx))
+    midx = MultiIndex.from_product([["a", "b"], ["c", "d"]])
+    return Styler(DataFrame(np.arange(16).reshape(4, 4), index=midx, columns=midx))
 
 
 @pytest.fixture
 def styler_multi():
-    df = pd.DataFrame(
+    df = DataFrame(
         data=np.arange(16).reshape(4, 4),
-        columns=pd.MultiIndex.from_product(
-            [["A", "B"], ["a", "b"]], names=["A&", "b&"]
-        ),
-        index=pd.MultiIndex.from_product([["X", "Y"], ["x", "y"]], names=["X>", "y_"]),
+        columns=MultiIndex.from_product([["A", "B"], ["a", "b"]], names=["A&", "b&"]),
+        index=MultiIndex.from_product([["X", "Y"], ["x", "y"]], names=["X>", "y_"]),
     )
     return Styler(df)
 
@@ -55,11 +54,10 @@ def tpl_table(env):
     return env.get_template("html_table.tpl")
 
 
-def test_html_template_extends_options(datapath):
+def test_html_template_extends_options():
     # make sure if templates are edited tests are updated as are setup fixtures
     # to understand the dependency
-    path = datapath("..", "io", "formats", "templates", "html.tpl")
-    with open(path, encoding="utf-8") as file:
+    with open("pandas/io/formats/templates/html.tpl", encoding="utf-8") as file:
         result = file.read()
     assert "{% include html_style_tpl %}" in result
     assert "{% include html_table_tpl %}" in result
@@ -104,7 +102,7 @@ def test_w3_html_format(styler):
     styler.set_uuid("").set_table_styles([{"selector": "th", "props": "att2:v2;"}]).map(
         lambda x: "att1:v1;"
     ).set_table_attributes('class="my-cls1" style="attr3:v3;"').set_td_classes(
-        pd.DataFrame(["my-cls2"], index=["a"], columns=["A"])
+        DataFrame(["my-cls2"], index=["a"], columns=["A"])
     ).format("{:.1f}").set_caption("A comprehensive test")
     expected = dedent(
         """\
@@ -142,14 +140,14 @@ def test_w3_html_format(styler):
 
 def test_colspan_w3():
     # GH 36223
-    df = pd.DataFrame(data=[[1, 2]], columns=[["l0", "l0"], ["l1a", "l1b"]])
+    df = DataFrame(data=[[1, 2]], columns=[["l0", "l0"], ["l1a", "l1b"]])
     styler = Styler(df, uuid="_", cell_ids=False)
     assert '<th class="col_heading level0 col0" colspan="2">l0</th>' in styler.to_html()
 
 
 def test_rowspan_w3():
     # GH 38533
-    df = pd.DataFrame(data=[[1, 2]], index=[["l0", "l0"], ["l1a", "l1b"]])
+    df = DataFrame(data=[[1, 2]], index=[["l0", "l0"], ["l1a", "l1b"]])
     styler = Styler(df, uuid="_", cell_ids=False)
     assert '<th class="row_heading level0 row0" rowspan="2">l0</th>' in styler.to_html()
 
@@ -205,7 +203,7 @@ def test_doctype(styler):
 
 
 def test_doctype_encoding(styler):
-    with pd.option_context("styler.render.encoding", "ASCII"):
+    with option_context("styler.render.encoding", "ASCII"):
         result = styler.to_html(doctype_html=True)
         assert '<meta charset="ASCII">' in result
         result = styler.to_html(doctype_html=True, encoding="ANSI")
@@ -272,7 +270,7 @@ def test_from_custom_template_table(tmpdir):
     assert issubclass(result, Styler)
     assert result.env is not Styler.env
     assert result.template_html_table is not Styler.template_html_table
-    styler = result(pd.DataFrame({"A": [1, 2]}))
+    styler = result(DataFrame({"A": [1, 2]}))
     assert "<h1>My Title</h1>\n\n\n<table" in styler.to_html(custom_title="My Title")
 
 
@@ -294,7 +292,7 @@ def test_from_custom_template_style(tmpdir):
     assert issubclass(result, Styler)
     assert result.env is not Styler.env
     assert result.template_html_style is not Styler.template_html_style
-    styler = result(pd.DataFrame({"A": [1, 2]}))
+    styler = result(DataFrame({"A": [1, 2]}))
     assert '<link rel="stylesheet" href="mystyle.css">\n\n<style' in styler.to_html()
 
 
@@ -420,14 +418,14 @@ def test_sticky_raises(styler):
     [(True, True), (True, False), (False, True), (False, False)],
 )
 def test_sparse_options(sparse_index, sparse_columns):
-    cidx = pd.MultiIndex.from_tuples([("Z", "a"), ("Z", "b"), ("Y", "c")])
-    ridx = pd.MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
-    df = pd.DataFrame([[1, 2, 3], [4, 5, 6], [7, 8, 9]], index=ridx, columns=cidx)
+    cidx = MultiIndex.from_tuples([("Z", "a"), ("Z", "b"), ("Y", "c")])
+    ridx = MultiIndex.from_tuples([("A", "a"), ("A", "b"), ("B", "c")])
+    df = DataFrame([[1, 2, 3], [4, 5, 6], [7, 8, 9]], index=ridx, columns=cidx)
     styler = df.style
 
     default_html = styler.to_html()  # defaults under pd.options to (True , True)
 
-    with pd.option_context(
+    with option_context(
         "styler.sparse.index", sparse_index, "styler.sparse.columns", sparse_columns
     ):
         html1 = styler.to_html()
@@ -495,15 +493,12 @@ def test_replaced_css_class_names():
         "data": "DATA",
         "blank": "BLANK",
     }
-    midx = pd.MultiIndex.from_product([["a", "b"], ["c", "d"]])
+    midx = MultiIndex.from_product([["a", "b"], ["c", "d"]])
     styler_mi = Styler(
-        pd.DataFrame(np.arange(16).reshape(4, 4), index=midx, columns=midx),
+        DataFrame(np.arange(16).reshape(4, 4), index=midx, columns=midx),
         uuid_len=0,
     ).set_table_styles(css_class_names=css)
     styler_mi.index.names = ["n1", "n2"]
-    # GH#42934: index and columns no longer alias when the same Index is passed
-    # to the DataFrame constructor, so set the column names explicitly.
-    styler_mi.columns.names = ["n1", "n2"]
     styler_mi.hide(styler_mi.index[1:], axis=0)
     styler_mi.hide(styler_mi.columns[1:], axis=1)
     styler_mi.map_index(lambda v: "color: red;", axis=0)
@@ -619,13 +614,13 @@ def test_include_css_style_rules_only_for_visible_column_labels(styler_mi):
 
 def test_hiding_index_columns_multiindex_alignment():
     # gh 43644
-    midx = pd.MultiIndex.from_product(
+    midx = MultiIndex.from_product(
         [["i0", "j0"], ["i1"], ["i2", "j2"]], names=["i-0", "i-1", "i-2"]
     )
-    cidx = pd.MultiIndex.from_product(
+    cidx = MultiIndex.from_product(
         [["c0"], ["c1", "d1"], ["c2", "d2"]], names=["c-0", "c-1", "c-2"]
     )
-    df = pd.DataFrame(np.arange(16).reshape(4, 4), index=midx, columns=cidx)
+    df = DataFrame(np.arange(16).reshape(4, 4), index=midx, columns=cidx)
     styler = Styler(df, uuid_len=0)
     styler.hide(level=1, axis=0).hide(level=0, axis=1)
     styler.hide([("j0", "i1", "j2")], axis=0)
@@ -688,13 +683,13 @@ def test_hiding_index_columns_multiindex_alignment():
 
 def test_hiding_index_columns_multiindex_trimming():
     # gh 44272
-    df = pd.DataFrame(np.arange(64).reshape(8, 8))
-    df.columns = pd.MultiIndex.from_product([[0, 1, 2, 3], [0, 1]])
-    df.index = pd.MultiIndex.from_product([[0, 1, 2, 3], [0, 1]])
+    df = DataFrame(np.arange(64).reshape(8, 8))
+    df.columns = MultiIndex.from_product([[0, 1, 2, 3], [0, 1]])
+    df.index = MultiIndex.from_product([[0, 1, 2, 3], [0, 1]])
     df.index.names, df.columns.names = ["a", "b"], ["c", "d"]
     styler = Styler(df, cell_ids=False, uuid_len=0)
     styler.hide([(0, 0), (0, 1), (1, 0)], axis=1).hide([(0, 0), (0, 1), (1, 0)], axis=0)
-    with pd.option_context("styler.render.max_rows", 4, "styler.render.max_columns", 4):
+    with option_context("styler.render.max_rows", 4, "styler.render.max_columns", 4):
         result = styler.to_html()
 
     expected = dedent(
@@ -812,10 +807,10 @@ def test_hiding_index_columns_multiindex_trimming():
 )
 def test_rendered_links(type, text, exp, found):
     if type == "data":
-        df = pd.DataFrame([text])
+        df = DataFrame([text])
         styler = df.style.format(hyperlinks="html")
     else:
-        df = pd.DataFrame([0], index=[text])
+        df = DataFrame([0], index=[text])
         styler = df.style.format_index(hyperlinks="html")
 
     rendered = f'<a href="{found}" target="_blank">{found}</a>'
@@ -826,7 +821,7 @@ def test_rendered_links(type, text, exp, found):
 
 def test_multiple_rendered_links():
     links = ("www.a.b", "http://a.c", "https://a.d", "ftp://a.e")
-    df = pd.DataFrame(["text {} {} text {} {}".format(*links)])
+    df = DataFrame(["text {} {} text {} {}".format(*links)])
     result = df.style.format(hyperlinks="html").to_html()
     href = '<a href="{0}" target="_blank">{0}</a>'
     for link in links:
@@ -938,7 +933,7 @@ def test_concat_combined():
             prefix=" " * 4,
         )
 
-    df = pd.DataFrame([[2.61], [2.69]], index=["a", "b"], columns=["A"])
+    df = DataFrame([[2.61], [2.69]], index=["a", "b"], columns=["A"])
     s1 = df.style.highlight_max(color="red")
     s2 = df.style.highlight_max(color="green")
     s3 = df.style.highlight_max(color="blue")
@@ -992,7 +987,7 @@ def test_concat_combined():
 
 def test_to_html_na_rep_non_scalar_data(datapath):
     # GH47103
-    df = pd.DataFrame([{"a": 1, "b": [1, 2, 3], "c": np.nan}])
+    df = DataFrame([{"a": 1, "b": [1, 2, 3], "c": np.nan}])
     result = df.style.format(na_rep="-").to_html(table_uuid="test")
     expected = """\
 <style type="text/css">

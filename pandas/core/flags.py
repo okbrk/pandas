@@ -3,13 +3,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 import weakref
 
-from pandas.util._decorators import set_module
-
 if TYPE_CHECKING:
     from pandas.core.generic import NDFrame
 
 
-@set_module("pandas")
 class Flags:
     """
     Flags that apply to pandas objects.
@@ -109,13 +106,13 @@ class Flags:
 
         self._allows_duplicate_labels = value
 
-    def __getitem__(self, key: str) -> bool:
+    def __getitem__(self, key: str):
         if key not in self._keys:
             raise KeyError(key)
 
         return getattr(self, key)
 
-    def __setitem__(self, key: str, value: bool) -> None:
+    def __setitem__(self, key: str, value) -> None:
         if key not in self._keys:
             raise ValueError(f"Unknown flag {key}. Must be one of {self._keys}")
         setattr(self, key, value)

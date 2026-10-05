@@ -3,15 +3,21 @@ import pickle
 import numpy as np
 import pytest
 
-from pandas.errors import Pandas4Warning
+from pandas.compat import HAS_PYARROW
+from pandas.compat.pyarrow import pa_version_under12p0
 
-import pandas as pd
+from pandas import (
+    DataFrame,
+    Series,
+    Timestamp,
+    date_range,
+)
 import pandas._testing as tm
 from pandas.tests.copy_view.util import get_array
 
 
 def test_astype_single_dtype():
-    df = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": 1.5})
+    df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": 1.5})
     df_orig = df.copy()
     df2 = df.astype("float64")
 
@@ -34,7 +40,7 @@ def test_astype_single_dtype():
 def test_astype_avoids_copy(dtype, new_dtype):
     if new_dtype == "int64[pyarrow]":
         pytest.importorskip("pyarrow")
-    df = pd.DataFrame({"a": [1, 2, 3]}, dtype=dtype)
+    df = DataFrame({"a": [1, 2, 3]}, dtype=dtype)
     df_orig = df.copy()
     df2 = df.astype(new_dtype)
     assert np.shares_memory(get_array(df2, "a"), get_array(df, "a"))
@@ -54,7 +60,7 @@ def test_astype_avoids_copy(dtype, new_dtype):
 def test_astype_different_target_dtype(dtype):
     if dtype == "int32[pyarrow]":
         pytest.importorskip("pyarrow")
-    df = pd.DataFrame({"a": [1, 2, 3]})
+    df = DataFrame({"a": [1, 2, 3]})
     df_orig = df.copy()
     df2 = df.astype(dtype)
 
@@ -71,16 +77,16 @@ def test_astype_different_target_dtype(dtype):
 
 
 def test_astype_numpy_to_ea():
-    ser = pd.Series([1, 2, 3])
+    ser = Series([1, 2, 3])
     result = ser.astype("Int64")
     assert np.shares_memory(get_array(ser), get_array(result))
 
 
 @pytest.mark.parametrize(
-    "dtype, new_dtype", [("object", "string[python]"), ("string[python]", "object")]
+    "dtype, new_dtype", [("object", "string"), ("string", "object")]
 )
 def test_astype_string_and_object(dtype, new_dtype):
-    df = pd.DataFrame({"a": ["a", "b", "c"]}, dtype=dtype)
+    df = DataFrame({"a": ["a", "b", "c"]}, dtype=dtype)
     df_orig = df.copy()
     df2 = df.astype(new_dtype)
     assert np.shares_memory(get_array(df2, "a"), get_array(df, "a"))
@@ -90,10 +96,10 @@ def test_astype_string_and_object(dtype, new_dtype):
 
 
 @pytest.mark.parametrize(
-    "dtype, new_dtype", [("object", "string[python]"), ("string[python]", "object")]
+    "dtype, new_dtype", [("object", "string"), ("string", "object")]
 )
 def test_astype_string_and_object_update_original(dtype, new_dtype):
-    df = pd.DataFrame({"a": ["a", "b", "c"]}, dtype=dtype)
+    df = DataFrame({"a": ["a", "b", "c"]}, dtype=dtype)
     df2 = df.astype(new_dtype)
     df_orig = df2.copy()
     assert np.shares_memory(get_array(df2, "a"), get_array(df, "a"))
@@ -106,7 +112,7 @@ def test_astype_str_copy_on_pickle_roundrip():
     # TODO(infer_string) this test can be removed after 3.0 (once str is the default)
     # https://github.com/pandas-dev/pandas/issues/54654
     # ensure_string_array may alter array inplace
-    base = pd.Series(np.array([(1, 2), None, 1], dtype="object"))
+    base = Series(np.array([(1, 2), None, 1], dtype="object"))
     base_copy = pickle.loads(pickle.dumps(base))
     base_copy.astype(str)
     tm.assert_series_equal(base, base_copy)
@@ -115,7 +121,7 @@ def test_astype_str_copy_on_pickle_roundrip():
 def test_astype_string_copy_on_pickle_roundrip(any_string_dtype):
     # https://github.com/pandas-dev/pandas/issues/54654
     # ensure_string_array may alter array inplace
-    base = pd.Series(np.array([(1, 2), None, 1], dtype="object"))
+    base = Series(np.array([(1, 2), None, 1], dtype="object"))
     base_copy = pickle.loads(pickle.dumps(base))
     base_copy.astype(any_string_dtype)
     tm.assert_series_equal(base, base_copy)
@@ -124,7 +130,7 @@ def test_astype_string_copy_on_pickle_roundrip(any_string_dtype):
 def test_astype_string_read_only_on_pickle_roundrip(any_string_dtype):
     # https://github.com/pandas-dev/pandas/issues/54654
     # ensure_string_array may alter read-only array inplace
-    base = pd.Series(np.array([(1, 2), None, 1], dtype="object"))
+    base = Series(np.array([(1, 2), None, 1], dtype="object"))
     base_copy = pickle.loads(pickle.dumps(base))
     base_copy._values.flags.writeable = False
     base_copy.astype(any_string_dtype)
@@ -132,12 +138,8 @@ def test_astype_string_read_only_on_pickle_roundrip(any_string_dtype):
 
 
 def test_astype_dict_dtypes():
-    df = pd.DataFrame(
-        {
-            "a": [1, 2, 3],
-            "b": [4, 5, 6],
-            "c": pd.Series([1.5, 1.5, 1.5], dtype="float64"),
-        }
+    df = DataFrame(
+        {"a": [1, 2, 3], "b": [4, 5, 6], "c": Series([1.5, 1.5, 1.5], dtype="float64")}
     )
     df_orig = df.copy()
     df2 = df.astype({"a": "float64", "c": "float64"})
@@ -156,7 +158,7 @@ def test_astype_dict_dtypes():
 
 
 def test_astype_different_datetime_resos():
-    df = pd.DataFrame({"a": pd.date_range("2019-12-31", periods=2, freq="D")})
+    df = DataFrame({"a": date_range("2019-12-31", periods=2, freq="D")})
     result = df.astype("datetime64[ms]")
 
     assert not np.shares_memory(get_array(df, "a"), get_array(result, "a"))
@@ -164,12 +166,8 @@ def test_astype_different_datetime_resos():
 
 
 def test_astype_different_timezones():
-    df = pd.DataFrame(
-        {
-            "a": pd.date_range(
-                "2019-12-31", periods=5, freq="D", tz="US/Pacific", unit="ns"
-            )
-        }
+    df = DataFrame(
+        {"a": date_range("2019-12-31", periods=5, freq="D", tz="US/Pacific")}
     )
     result = df.astype("datetime64[ns, Europe/Berlin]")
     assert not result._mgr._has_no_reference(0)
@@ -177,12 +175,8 @@ def test_astype_different_timezones():
 
 
 def test_astype_different_timezones_different_reso():
-    df = pd.DataFrame(
-        {
-            "a": pd.date_range(
-                "2019-12-31", periods=5, freq="D", tz="US/Pacific", unit="ns"
-            )
-        }
+    df = DataFrame(
+        {"a": date_range("2019-12-31", periods=5, freq="D", tz="US/Pacific")}
     )
     result = df.astype("datetime64[ms, Europe/Berlin]")
     assert result._mgr._has_no_reference(0)
@@ -191,31 +185,34 @@ def test_astype_different_timezones_different_reso():
 
 def test_astype_arrow_timestamp():
     pytest.importorskip("pyarrow")
-    df = pd.DataFrame(
+    df = DataFrame(
         {
             "a": [
-                pd.Timestamp("2020-01-01 01:01:01.000001"),
-                pd.Timestamp("2020-01-01 01:01:01.000001"),
+                Timestamp("2020-01-01 01:01:01.000001"),
+                Timestamp("2020-01-01 01:01:01.000001"),
             ]
         },
         dtype="M8[ns]",
     )
     result = df.astype("timestamp[ns][pyarrow]")
     assert not result._mgr._has_no_reference(0)
-    assert np.shares_memory(get_array(df, "a"), get_array(result, "a")._pa_array)
+    if pa_version_under12p0:
+        assert not np.shares_memory(
+            get_array(df, "a"), get_array(result, "a")._pa_array
+        )
+    else:
+        assert np.shares_memory(get_array(df, "a"), get_array(result, "a")._pa_array)
 
 
 def test_convert_dtypes_infer_objects():
-    ser = pd.Series(["a", "b", "c"])
+    ser = Series(["a", "b", "c"])
     ser_orig = ser.copy()
-    msg = "keyword in Series.convert_dtypes is deprecated"
-    with tm.assert_produces_warning(Pandas4Warning, match=msg):
-        result = ser.convert_dtypes(
-            convert_integer=False,
-            convert_boolean=False,
-            convert_floating=False,
-            convert_string=False,
-        )
+    result = ser.convert_dtypes(
+        convert_integer=False,
+        convert_boolean=False,
+        convert_floating=False,
+        convert_string=False,
+    )
 
     assert tm.shares_memory(get_array(ser), get_array(result))
     result.iloc[0] = "x"
@@ -223,18 +220,16 @@ def test_convert_dtypes_infer_objects():
 
 
 def test_convert_dtypes(using_infer_string):
-    df = pd.DataFrame(
-        {"a": ["a", "b"], "b": [1, 2], "c": [1.5, 2.5], "d": [True, False]}
-    )
+    df = DataFrame({"a": ["a", "b"], "b": [1, 2], "c": [1.5, 2.5], "d": [True, False]})
     df_orig = df.copy()
     df2 = df.convert_dtypes()
 
-    if using_infer_string:
-        # String column is already Arrow-backed, so memory is shared
-        assert tm.shares_memory(get_array(df2, "a"), get_array(df, "a"))
-    else:
-        # String column converts from object to Arrow, no memory sharing
+    if using_infer_string and HAS_PYARROW:
+        # TODO the default nullable string dtype still uses python storage
+        # this should be changed to pyarrow if installed
         assert not tm.shares_memory(get_array(df2, "a"), get_array(df, "a"))
+    else:
+        assert tm.shares_memory(get_array(df2, "a"), get_array(df, "a"))
     assert tm.shares_memory(get_array(df2, "d"), get_array(df, "d"))
     assert tm.shares_memory(get_array(df2, "b"), get_array(df, "b"))
     assert tm.shares_memory(get_array(df2, "c"), get_array(df, "c"))

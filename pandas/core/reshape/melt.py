@@ -1,14 +1,9 @@
 from __future__ import annotations
 
 import re
-from typing import (
-    TYPE_CHECKING,
-    Any,
-)
+from typing import TYPE_CHECKING
 
 import numpy as np
-
-from pandas.util._decorators import set_module
 
 from pandas.core.dtypes.common import (
     is_iterator,
@@ -30,7 +25,7 @@ if TYPE_CHECKING:
     from pandas import DataFrame
 
 
-def ensure_list_vars(arg_vars, variable: str, columns) -> list[Hashable]:
+def ensure_list_vars(arg_vars, variable: str, columns) -> list:
     if arg_vars is not None:
         if not is_list_like(arg_vars):
             return [arg_vars]
@@ -44,7 +39,6 @@ def ensure_list_vars(arg_vars, variable: str, columns) -> list[Hashable]:
         return []
 
 
-@set_module("pandas")
 def melt(
     frame: DataFrame,
     id_vars=None,
@@ -57,9 +51,9 @@ def melt(
     """
     Unpivot a DataFrame from wide to long format, optionally leaving identifiers set.
 
-    This function is useful to reshape a DataFrame into a format where one
+    This function is useful to massage a DataFrame into a format where one
     or more columns are identifier variables (`id_vars`), while all other
-    columns are considered measured variables (`value_vars`), and are "unpivoted" to
+    columns, considered measured variables (`value_vars`), are "unpivoted" to
     the row axis, leaving just two non-identifier columns, 'variable' and
     'value'.
 
@@ -112,19 +106,19 @@ def melt(
     ...     }
     ... )
     >>> df
-       A  B  C
+    A  B  C
     0  a  1  2
     1  b  3  4
     2  c  5  6
 
     >>> pd.melt(df, id_vars=["A"], value_vars=["B"])
-       A variable  value
+    A variable  value
     0  a        B      1
     1  b        B      3
     2  c        B      5
 
     >>> pd.melt(df, id_vars=["A"], value_vars=["B", "C"])
-       A variable  value
+    A variable  value
     0  a        B      1
     1  b        B      3
     2  c        B      5
@@ -141,7 +135,7 @@ def melt(
     ...     var_name="myVarname",
     ...     value_name="myValname",
     ... )
-       A myVarname  myValname
+    A myVarname  myValname
     0  a         B          1
     1  b         B          3
     2  c         B          5
@@ -149,7 +143,7 @@ def melt(
     Original index values can be kept around:
 
     >>> pd.melt(df, id_vars=["A"], value_vars=["B", "C"], ignore_index=False)
-       A variable  value
+    A variable  value
     0  a        B      1
     1  b        B      3
     2  c        B      5
@@ -161,20 +155,20 @@ def melt(
 
     >>> df.columns = [list("ABC"), list("DEF")]
     >>> df
-       A  B  C
-       D  E  F
+    A  B  C
+    D  E  F
     0  a  1  2
     1  b  3  4
     2  c  5  6
 
     >>> pd.melt(df, col_level=0, id_vars=["A"], value_vars=["B"])
-       A variable  value
+    A variable  value
     0  a        B      1
     1  b        B      3
     2  c        B      5
 
     >>> pd.melt(df, id_vars=[("A", "D")], value_vars=[("B", "E")])
-      (A, D) variable_0 variable_1  value
+    (A, D) variable_0 variable_1  value
     0      a          B          E      1
     1      b          B          E      3
     2      c          B          E      5
@@ -188,10 +182,6 @@ def melt(
     value_vars_was_not_none = value_vars is not None
     value_vars = ensure_list_vars(value_vars, "value_vars", frame.columns)
 
-    # GH61475 - prevent AttributeError when duplicate column in id_vars
-    if len(frame.columns.get_indexer_for(id_vars)) > len(id_vars):
-        raise ValueError("id_vars cannot contain duplicate columns.")
-
     if id_vars or value_vars:
         if col_level is not None:
             level = frame.columns.get_level_values(col_level)
@@ -202,7 +192,7 @@ def melt(
         missing = idx == -1
         if missing.any():
             missing_labels = [
-                lab for lab, not_found in zip(labels, missing, strict=True) if not_found
+                lab for lab, not_found in zip(labels, missing) if not_found
             ]
             raise KeyError(
                 "The following id_vars or value_vars are not present in "
@@ -243,11 +233,6 @@ def melt(
     else:
         var_name = [var_name]
 
-    output_names = (*id_vars, *var_name, value_name)
-    dups = list({x for x in output_names if output_names.count(x) > 1})
-    if dups:
-        raise ValueError(f"melt output columns cannot contain duplicate names: {dups}")
-
     num_rows, K = frame.shape
     num_cols_adjusted = K - len(id_vars)
 
@@ -271,7 +256,7 @@ def melt(
     ):
         mdata[value_name] = concat(
             [frame.iloc[:, i] for i in range(frame.shape[1])], ignore_index=True
-        )._values
+        ).values
     else:
         mdata[value_name] = frame._values.ravel("F")
     for i, col in enumerate(var_name):
@@ -286,10 +271,7 @@ def melt(
     return result
 
 
-@set_module("pandas")
-def lreshape(
-    data: DataFrame, groups: dict[Any, list[Any]], dropna: bool = True
-) -> DataFrame:
+def lreshape(data: DataFrame, groups: dict, dropna: bool = True) -> DataFrame:
     """
     Reshape wide-format data to long. Generalized inverse of DataFrame.pivot.
 
@@ -361,7 +343,7 @@ def lreshape(
         pivot_cols.append(target)
         all_cols = all_cols.union(names)
 
-    id_cols = list(data.columns.difference(all_cols))  # type: ignore[arg-type]
+    id_cols = list(data.columns.difference(all_cols))
     for col in id_cols:
         mdata[col] = np.tile(data[col]._values, K)
 
@@ -375,7 +357,6 @@ def lreshape(
     return data._constructor(mdata, columns=id_cols + pivot_cols)
 
 
-@set_module("pandas")
 def wide_to_long(
     df: DataFrame, stubnames, i, j, sep: str = "", suffix: str = r"\d+"
 ) -> DataFrame:
@@ -454,7 +435,7 @@ def wide_to_long(
     ...         "A1980": {0: "d", 1: "e", 2: "f"},
     ...         "B1970": {0: 2.5, 1: 1.2, 2: 0.7},
     ...         "B1980": {0: 3.2, 1: 1.3, 2: 0.1},
-    ...         "X": dict(zip(range(3), np.random.randn(3), strict=True)),
+    ...         "X": dict(zip(range(3), np.random.randn(3))),
     ...     }
     ... )
     >>> df["id"] = df.index
@@ -651,7 +632,7 @@ def wide_to_long(
             # TODO: anything else to catch?
             pass
 
-        return newdf.set_index([*i, j])
+        return newdf.set_index(i + [j])
 
     if not is_list_like(stubnames):
         stubnames = [stubnames]
@@ -660,10 +641,6 @@ def wide_to_long(
 
     if df.columns.isin(stubnames).any():
         raise ValueError("stubname can't be identical to a column name")
-
-    # GH#46939 melt_stub names the value column stub.rstrip(sep), which clashes with j
-    if any(stub.rstrip(sep) == j for stub in stubnames):
-        raise ValueError(f"j ({j}) can't be identical to a stubname")
 
     if not is_list_like(i):
         i = [i]
@@ -687,4 +664,4 @@ def wide_to_long(
     if len(i) == 1:
         return new.set_index(i).join(melted)
     else:
-        return new.merge(melted.reset_index(), on=i).set_index([*i, j])
+        return new.merge(melted.reset_index(), on=i).set_index(i + [j])

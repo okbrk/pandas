@@ -74,7 +74,7 @@ cdef class NDArrayBacked:
         This should round-trip:
             self == self._from_backing_data(self._ndarray)
         """
-        # TODO: reuse simple_new if/when it can be cpdef
+        # TODO: re-reuse simple_new if/when it can be cpdef
         cdef:
             NDArrayBacked obj
         obj = NDArrayBacked.__new__(type(self))
@@ -100,10 +100,6 @@ cdef class NDArrayBacked:
                 if len(state) == 1 and isinstance(state[0], dict):
                     self.__setstate__(state[0])
                     return
-                elif len(state) == 2:
-                    # GH#62820: Handle missing attrs dict during auto-unpickling
-                    self.__setstate__((*state, {}))
-                    return
                 raise NotImplementedError(state)  # pragma: no cover
 
             data, dtype = state[:2]
@@ -121,26 +117,20 @@ cdef class NDArrayBacked:
             raise NotImplementedError(state)  # pragma: no cover
 
     def __len__(self) -> int:
-        return cnp.PyArray_DIMS(self._ndarray)[0]
+        return len(self._ndarray)
 
     @property
     def shape(self):
-        cdef:
-            int ndim = cnp.PyArray_NDIM(self._ndarray)
-            cnp.npy_intp *dims = cnp.PyArray_DIMS(self._ndarray)
-        if ndim == 1:
-            return (dims[0],)
-        elif ndim == 2:
-            return (dims[0], dims[1])
-        return tuple(dims[idx] for idx in range(ndim))
+        # object cast bc _ndarray.shape is npy_intp*
+        return (<object>(self._ndarray)).shape
 
     @property
     def ndim(self) -> int:
-        return cnp.PyArray_NDIM(self._ndarray)
+        return self._ndarray.ndim
 
     @property
     def size(self) -> int:
-        return cnp.PyArray_SIZE(self._ndarray)
+        return self._ndarray.size
 
     @property
     def nbytes(self) -> int:
@@ -182,22 +172,14 @@ cdef class NDArrayBacked:
         return self._from_backing_data(res_values)
 
     def ravel(self, order="C"):
-        cdef:
-            cnp.NPY_ORDER order_code
-            int success
-
-        success = cnp.PyArray_OrderConverter(order, &order_code)
-        if not success:
-            PyErr_Clear()
-            msg = f"order must be one of 'C', 'F', 'A', or 'K' (got '{order}')"
-            raise ValueError(msg)
-
-        res_values = cnp.PyArray_Ravel(self._ndarray, order_code)
+        # cnp.PyArray_OrderConverter(PyObject* obj, NPY_ORDER* order)
+        # res_values = cnp.PyArray_Ravel(self._ndarray, order)
+        res_values = self._ndarray.ravel(order)
         return self._from_backing_data(res_values)
 
     @property
     def T(self):
-        res_values = cnp.PyArray_Transpose(self._ndarray, NULL)
+        res_values = self._ndarray.T
         return self._from_backing_data(res_values)
 
     def transpose(self, *axes):

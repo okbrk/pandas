@@ -11,11 +11,6 @@ from typing import (
 )
 import warnings
 
-from pandas._config.config import _global_config as config
-
-from pandas._libs import lib
-from pandas.errors import Pandas4Warning
-from pandas.util._decorators import set_module
 from pandas.util._exceptions import find_stack_level
 from pandas.util._validators import validate_bool_kwarg
 
@@ -60,17 +55,8 @@ def _check_engine(engine: str | None) -> str:
     str
         Engine name.
     """
-    from pandas.core.computation.check import (
-        NUMEXPR_BLOCKED_VERSION,
-        NUMEXPR_INSTALLED,
-        warn_numexpr_blocked,
-    )
+    from pandas.core.computation.check import NUMEXPR_INSTALLED
     from pandas.core.computation.expressions import USE_NUMEXPR
-
-    if engine is None and not NUMEXPR_INSTALLED and config["compute"]["use_numexpr"]:
-        # report an unusable numexpr where we would have used it, GH#66956. An
-        #  explicit engine="numexpr" raises below, which needs no warning.
-        warn_numexpr_blocked()
 
     if engine is None:
         engine = "numexpr" if USE_NUMEXPR else "python"
@@ -85,19 +71,10 @@ def _check_engine(engine: str | None) -> str:
     # that won't necessarily be import-able)
     # Could potentially be done on engine instantiation
     if engine == "numexpr" and not NUMEXPR_INSTALLED:
-        if NUMEXPR_BLOCKED_VERSION is not None:
-            # the deferred warning does not fire here, so the raise names the version
-            msg = (
-                f"numexpr {NUMEXPR_BLOCKED_VERSION} is installed, but can silently "
-                "return incorrect results, so pandas does not use it. Install "
-                "numexpr 2.14.2 or newer to use engine='numexpr'."
-            )
-        else:
-            msg = (
-                "'numexpr' is not installed or an unsupported version. Cannot use "
-                "engine='numexpr' for query/eval if 'numexpr' is not installed"
-            )
-        raise ImportError(msg)
+        raise ImportError(
+            "'numexpr' is not installed or an unsupported version. Cannot use "
+            "engine='numexpr' for query/eval if 'numexpr' is not installed"
+        )
 
     return engine
 
@@ -197,7 +174,6 @@ def _check_for_locals(expr: str, stack_level: int, parser: str) -> None:
                 raise SyntaxError(msg)
 
 
-@set_module("pandas")
 def eval(
     expr: str | BinOp,  # we leave BinOp out of the docstr bc it isn't for users
     parser: str = "pandas",
@@ -207,15 +183,15 @@ def eval(
     resolvers=(),
     level: int = 0,
     target=None,
-    inplace: bool | lib.NoDefault = lib.no_default,
+    inplace: bool = False,
 ) -> Any:
     """
     Evaluate a Python expression as a string using various backends.
 
     .. warning::
 
-        This function can run arbitrary code which can make you vulnerable to code
-        injection if you pass user input to this function.
+        ``eval`` can run arbitrary code which can make you vulnerable to code
+         injection and untrusted data.
 
     Parameters
     ----------
@@ -228,7 +204,7 @@ def eval(
 
         By default, with the numexpr engine, the following operations are supported:
 
-        - Arithmetic operations: ``+``, ``-``, ``*``, ``/``, ``**``, ``%``
+        - Arthimetic operations: ``+``, ``-``, ``*``, ``/``, ``**``, ``%``
         - Boolean operations: ``|`` (or), ``&`` (and), and ``~`` (not)
         - Comparison operators: ``<``, ``<=``, ``==``, ``!=``, ``>=``, ``>``
 
@@ -260,14 +236,13 @@ def eval(
         ``'python'`` parser to retain strict Python semantics.  See the
         :ref:`enhancing performance <enhancingperf.eval>` documentation for
         more details.
-    engine : {'python', 'numexpr'}, optional, default None
+    engine : {'python', 'numexpr'}, default 'numexpr'
 
         The engine used to evaluate the expression. Supported engines are
 
         - None : tries to use ``numexpr``, falls back to ``python``
-        - ``'numexpr'`` : This is the default engine when ``numexpr`` is installed.
-          Evaluates pandas objects using numexpr for large speed ups in complex
-          expressions with large frames.
+        - ``'numexpr'`` : This default engine evaluates pandas objects using
+          numexpr for large speed ups in complex expressions with large frames.
         - ``'python'`` : Performs operations as if you had ``eval``'d in top
           level python. This engine is generally not that useful.
 
@@ -296,13 +271,6 @@ def eval(
         If `target` is provided, and the expression mutates `target`, whether
         to modify `target` inplace. Otherwise, return a copy of `target` with
         the mutation.
-
-        .. deprecated:: 3.1.0
-
-            This keyword is deprecated and will be removed in pandas 4.0.
-            See the `whatsnew note on PDEP-8
-            <https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace>`__
-            for more details.
 
     Returns
     -------
@@ -359,29 +327,12 @@ def eval(
     0    dog   10          20
     1    pig   20          40
     """
-    if inplace is not lib.no_default:
-        # GH#63207
-        warnings.warn(
-            "The inplace keyword in eval is deprecated and will be removed "
-            "in a future version (PDEP-8).\nSee "
-            "https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace"
-            " for more details.",
-            Pandas4Warning,
-            stacklevel=find_stack_level(),
-        )
-    else:
-        inplace = False
-
     inplace = validate_bool_kwarg(inplace, "inplace")
 
     exprs: list[str | BinOp]
     if isinstance(expr, str):
         _check_expression(expr)
         exprs = [e.strip() for e in expr.splitlines() if e.strip() != ""]
-    elif isinstance(expr, NDFrame):
-        # GH#16289 a Series/DataFrame would otherwise be converted to its
-        #  (possibly truncated) repr and parsed, producing a confusing error
-        raise ValueError(f"expr must be a string to be evaluated, {type(expr)} given")
     else:
         # ops.BinOp; for internal compat, not intended to be passed by users
         exprs = [expr]
@@ -420,12 +371,10 @@ def eval(
                 is_extension_array_dtype(parsed_expr.terms.return_type)
                 and not is_string_dtype(parsed_expr.terms.return_type)
             )
-            or (
-                getattr(parsed_expr.terms, "operand_types", None) is not None
-                and any(
-                    (is_extension_array_dtype(elem) and not is_string_dtype(elem))
-                    for elem in parsed_expr.terms.operand_types
-                )
+            or getattr(parsed_expr.terms, "operand_types", None) is not None
+            and any(
+                (is_extension_array_dtype(elem) and not is_string_dtype(elem))
+                for elem in parsed_expr.terms.operand_types
             )
         ):
             warnings.warn(

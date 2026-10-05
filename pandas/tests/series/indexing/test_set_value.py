@@ -2,24 +2,24 @@ from datetime import datetime
 
 import numpy as np
 
-import pandas as pd
+from pandas import (
+    Index,
+    Series,
+)
 import pandas._testing as tm
 
 
-def test_series_set_value(using_infer_string):
+def test_series_set_value():
     # GH#1561, GH#51363 as of 3.0 we do not do inference in Index.insert
 
     dates = [datetime(2001, 1, 1), datetime(2001, 1, 2)]
-    if using_infer_string:
-        index = pd.DatetimeIndex(dates)
-    else:
-        index = pd.Index(dates, dtype=object)
+    index = Index(dates, dtype=object)
 
-    s = pd.Series(dtype=object)
+    s = Series(dtype=object)
     s._set_value(dates[0], 1.0)
     s._set_value(dates[1], np.nan)
 
-    expected = pd.Series([1.0, np.nan], index=index)
+    expected = Series([1.0, np.nan], index=index)
 
     tm.assert_series_equal(s, expected)
 

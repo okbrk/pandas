@@ -10,15 +10,13 @@ import copy
 from typing import (
     TYPE_CHECKING,
     Any,
+    DefaultDict,
     overload,
 )
 
 import numpy as np
 
 from pandas._libs.writers import convert_json_to_lines
-from pandas.util._decorators import set_module
-
-from pandas.core.dtypes.common import is_scalar
 
 import pandas as pd
 from pandas import (
@@ -50,7 +48,7 @@ def convert_to_line_delimits(s: str) -> str:
 
 @overload
 def nested_to_record(
-    ds: dict[Any, Any],
+    ds: dict,
     prefix: str = ...,
     sep: str = ...,
     level: int = ...,
@@ -60,7 +58,7 @@ def nested_to_record(
 
 @overload
 def nested_to_record(
-    ds: list[dict[Any, Any]],
+    ds: list[dict],
     prefix: str = ...,
     sep: str = ...,
     level: int = ...,
@@ -69,7 +67,7 @@ def nested_to_record(
 
 
 def nested_to_record(
-    ds: dict[Any, Any] | list[dict[Any, Any]],
+    ds: dict | list[dict],
     prefix: str = "",
     sep: str = ".",
     level: int = 0,
@@ -149,7 +147,7 @@ def nested_to_record(
     return new_ds
 
 
-def _normalize_json(
+def _normalise_json(
     data: Any,
     key_string: str,
     normalized_dict: dict[str, Any],
@@ -179,7 +177,7 @@ def _normalize_json(
             if not key_string:
                 new_key = new_key.removeprefix(separator)
 
-            _normalize_json(
+            _normalise_json(
                 data=value,
                 key_string=new_key,
                 normalized_dict=normalized_dict,
@@ -190,7 +188,7 @@ def _normalize_json(
     return normalized_dict
 
 
-def _normalize_json_ordered(data: dict[str, Any], separator: str) -> dict[str, Any]:
+def _normalise_json_ordered(data: dict[str, Any], separator: str) -> dict[str, Any]:
     """
     Order the top level keys and then recursively go to depth
 
@@ -203,10 +201,10 @@ def _normalize_json_ordered(data: dict[str, Any], separator: str) -> dict[str, A
 
     Returns
     -------
-    dict or list of dicts, matching `normalized_json_object`
+    dict or list of dicts, matching `normalised_json_object`
     """
     top_dict_ = {k: v for k, v in data.items() if not isinstance(v, dict)}
-    nested_dict_ = _normalize_json(
+    nested_dict_ = _normalise_json(
         data={k: v for k, v in data.items() if isinstance(v, dict)},
         key_string="",
         normalized_dict={},
@@ -216,11 +214,11 @@ def _normalize_json_ordered(data: dict[str, Any], separator: str) -> dict[str, A
 
 
 def _simple_json_normalize(
-    ds: dict[Any, Any] | list[dict[Any, Any]],
+    ds: dict | list[dict],
     sep: str = ".",
-) -> dict[str, Any] | list[dict[str, Any]] | Any:
+) -> dict | list[dict] | Any:
     """
-    An optimized basic json_normalize
+    A optimized basic json_normalize
 
     Converts a nested dict into a flat dict ("record"), unlike
     json_normalize and nested_to_record it doesn't do anything clever.
@@ -237,7 +235,7 @@ def _simple_json_normalize(
     Returns
     -------
     frame : DataFrame
-    d - dict or list of dicts, matching `normalized_json_object`
+    d - dict or list of dicts, matching `normalised_json_object`
 
     Examples
     --------
@@ -258,51 +256,19 @@ def _simple_json_normalize(
 }
 
     """
-    normalized_json_object = {}
+    normalised_json_object = {}
     # expect a dictionary, as most jsons are. However, lists are perfectly valid
     if isinstance(ds, dict):
-        normalized_json_object = _normalize_json_ordered(data=ds, separator=sep)
+        normalised_json_object = _normalise_json_ordered(data=ds, separator=sep)
     elif isinstance(ds, list):
-        normalized_json_list = [_simple_json_normalize(row, sep=sep) for row in ds]
-        return normalized_json_list
-    return normalized_json_object
+        normalised_json_list = [_simple_json_normalize(row, sep=sep) for row in ds]
+        return normalised_json_list
+    return normalised_json_object
 
 
-def _validate_meta(meta: str | list[str | list[str]] | None) -> None:
-    """
-    Validate that meta parameter contains only strings or lists of strings.
-    Parameters
-    ----------
-    meta : str or list of str or list of list of str or None
-        The meta parameter to validate.
-    Raises
-    ------
-    TypeError
-        If meta contains elements that are not strings or lists of strings.
-    """
-    if meta is None:
-        return
-    if isinstance(meta, str):
-        return
-    for item in meta:
-        if isinstance(item, list):
-            for subitem in item:
-                if not isinstance(subitem, str):
-                    raise TypeError(
-                        "All elements in nested meta paths must be strings. "
-                        f"Found {type(subitem).__name__}: {subitem!r}"
-                    )
-        elif not isinstance(item, str):
-            raise TypeError(
-                "All elements in 'meta' must be strings or lists of strings. "
-                f"Found {type(item).__name__}: {item!r}"
-            )
-
-
-@set_module("pandas")
 def json_normalize(
-    data: dict[Any, Any] | list[dict[Any, Any]] | Series,
-    record_path: str | list[str] | None = None,
+    data: dict | list[dict] | Series,
+    record_path: str | list | None = None,
     meta: str | list[str | list[str]] | None = None,
     meta_prefix: str | None = None,
     record_prefix: str | None = None,
@@ -327,9 +293,11 @@ def json_normalize(
     meta : list of paths (str or list of str), default None
         Fields to use as metadata for each record in resulting table.
     meta_prefix : str, default None
-        If not None, prefix meta fields with this string.
+        If True, prefix records with dotted path, e.g. foo.bar.field if
+        meta is ['foo', 'bar'].
     record_prefix : str, default None
-        If not None, prefix record fields with this string.
+        If True, prefix records with dotted path, e.g. foo.bar.field if
+        path to records is ['foo', 'bar'].
     errors : {'raise', 'ignore'}, default 'raise'
         Configures error handling.
 
@@ -466,31 +434,11 @@ def json_normalize(
     1          2
 
     Returns normalized data with columns prefixed with the given string.
-
-    >>> data = [
-    ...     {
-    ...         "state": "Florida",
-    ...         "shortname": "FL",
-    ...         "info": {"governor": "Rick Scott"},
-    ...         "counties": [{"name": "Dade", "population": 12345}],
-    ...     },
-    ... ]
-    >>> pd.json_normalize(
-    ...     data,
-    ...     "counties",
-    ...     ["state", "shortname", ["info", "governor"]],
-    ...     meta_prefix="meta.",
-    ... )
-       name  population meta.state meta.shortname meta.info.governor
-    0  Dade       12345    Florida             FL         Rick Scott
-
-    Meta fields are prefixed with the given string.
     """
-    _validate_meta(meta)
 
     def _pull_field(
-        js: dict[str, Any], spec: list[str] | str, extract_record: bool = False
-    ) -> Scalar | Iterable[Any]:
+        js: dict[str, Any], spec: list | str, extract_record: bool = False
+    ) -> Scalar | Iterable:
         """Internal function to pull field"""
         result = js
         try:
@@ -517,7 +465,7 @@ def json_normalize(
 
         return result
 
-    def _pull_records(js: dict[str, Any], spec: list[str] | str) -> list[Any]:
+    def _pull_records(js: dict[str, Any], spec: list | str) -> list:
         """
         Internal function to pull field for records, and similar to
         _pull_field, but require to return list. And will raise error
@@ -551,17 +499,6 @@ def json_normalize(
         # GH35923 Fix pd.json_normalize to not skip the first element of a
         # generator input
         data = list(data)
-        for i, item in enumerate(data):
-            if isinstance(item, dict):
-                continue
-            if is_scalar(item) and pd.isna(item):
-                data[i] = {}
-            else:
-                msg = (
-                    "All items in data must be of type dict or NA-like, "
-                    f"found {type(item).__name__}"
-                )
-                raise TypeError(msg)
     else:
         raise NotImplementedError
 
@@ -587,10 +524,7 @@ def json_normalize(
             # TODO: handle record value which are lists, at least error
             #       reasonably
             data = nested_to_record(data, sep=sep, max_level=max_level)
-        result = DataFrame(data, index=index)
-        if record_prefix is not None:
-            result = result.rename(columns=lambda x: f"{record_prefix}{x}")
-        return result
+        return DataFrame(data, index=index)
     elif not isinstance(record_path, list):
         record_path = [record_path]
 
@@ -602,10 +536,10 @@ def json_normalize(
     _meta = [m if isinstance(m, list) else [m] for m in meta]
 
     # Disastrously inefficient for now
-    records: list[Any] = []
+    records: list = []
     lengths = []
 
-    meta_vals = defaultdict(list)
+    meta_vals: DefaultDict = defaultdict(list)
     meta_keys = [sep.join(val) for val in _meta]
 
     def _recursive_extract(data, path, seen_meta, level: int = 0) -> None:
@@ -613,7 +547,7 @@ def json_normalize(
             data = [data]
         if len(path) > 1:
             for obj in data:
-                for val, key in zip(_meta, meta_keys, strict=True):
+                for val, key in zip(_meta, meta_keys):
                     if level + 1 == len(val):
                         seen_meta[key] = _pull_field(obj, val[-1])
 
@@ -630,7 +564,7 @@ def json_normalize(
 
                 # For repeating the metadata later
                 lengths.append(len(recs))
-                for val, key in zip(_meta, meta_keys, strict=True):
+                for val, key in zip(_meta, meta_keys):
                     if level + 1 > len(val):
                         meta_val = seen_meta[key]
                     else:

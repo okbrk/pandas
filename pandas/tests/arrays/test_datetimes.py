@@ -7,17 +7,10 @@ from __future__ import annotations
 from datetime import timedelta
 import operator
 
-from dateutil.tz import tzlocal
 import numpy as np
 import pytest
 
 from pandas._libs.tslibs import tz_compare
-from pandas.compat import is_platform_windows
-from pandas.compat.numpy import (
-    is_numpy_dev,
-    np_version_gt2_5,
-)
-from pandas.errors import Pandas4Warning
 
 from pandas.core.dtypes.dtypes import DatetimeTZDtype
 
@@ -47,7 +40,7 @@ class TestNonNano:
     def dta_dti(self, unit, dtype):
         tz = getattr(dtype, "tz", None)
 
-        dti = pd.date_range("2016-01-01", periods=55, freq="D", tz=tz, unit="ns")
+        dti = pd.date_range("2016-01-01", periods=55, freq="D", tz=tz)
         if tz is None:
             arr = np.asarray(dti).astype(f"M8[{unit}]")
         else:
@@ -64,11 +57,6 @@ class TestNonNano:
         return dta
 
     def test_non_nano(self, unit, dtype):
-        if isinstance(getattr(dtype, "tz", None), tzlocal) and is_platform_windows():
-            pytest.skip(
-                "GH#37659 OSError raised within tzlocal bc Windows "
-                "chokes in times before 1970-01-01"
-            )
         arr = np.arange(5, dtype=np.int64).view(f"M8[{unit}]")
         dta = DatetimeArray._simple_new(arr, dtype=dtype)
 
@@ -85,10 +73,8 @@ class TestNonNano:
 
         assert (dti == dta).all()
 
-        warn = Pandas4Warning if field == "weekday" else None
-        with tm.assert_produces_warning(warn, match="weekday is deprecated"):
-            res = getattr(dta, field)
-            expected = getattr(dti._data, field)
+        res = getattr(dta, field)
+        expected = getattr(dti._data, field)
         tm.assert_numpy_array_equal(res, expected)
 
     def test_normalize(self, unit):
@@ -106,15 +92,6 @@ class TestNonNano:
         res = dta.normalize()
         tm.assert_extension_array_equal(res, expected)
 
-    def test_normalize_overflow_raises(self):
-        # GH#60583
-        ts = pd.Timestamp.min
-        dta = DatetimeArray._from_sequence([ts], dtype="M8[ns]")
-
-        msg = "Cannot normalize Timestamp without integer overflow"
-        with pytest.raises(ValueError, match=msg):
-            dta.normalize()
-
     def test_simple_new_requires_match(self, unit):
         arr = np.arange(5, dtype=np.int64).view(f"M8[{unit}]")
         dtype = DatetimeTZDtype(unit, "UTC")
@@ -123,11 +100,11 @@ class TestNonNano:
         assert dta.dtype == dtype
 
         wrong = DatetimeTZDtype("ns", "UTC")
-        with pytest.raises(AssertionError, match="^$"):
+        with pytest.raises(AssertionError, match=""):
             DatetimeArray._simple_new(arr, dtype=wrong)
 
     def test_std_non_nano(self, unit):
-        dti = pd.date_range("2016-01-01", periods=55, freq="D", unit="ns")
+        dti = pd.date_range("2016-01-01", periods=55, freq="D")
         arr = np.asarray(dti).astype(f"M8[{unit}]")
 
         dta = DatetimeArray._simple_new(arr, dtype=arr.dtype)
@@ -136,29 +113,6 @@ class TestNonNano:
         res = dta.std()
         assert res._creso == dta._creso
         assert res == dti.std().floor(unit)
-
-    def test_tz_convert_localize_pre_1677_non_nano(self, unit):
-        # GH#66252 the NPY_NAT+1 "beginning of time" transition sentinel was
-        #  scaled along with the real transitions when localizing a non-nano
-        #  resolution, so tz-aware values before ~1677 (not representable in
-        #  nanoseconds) bisected past the transitions and got a garbage offset
-        #  from an out-of-bounds read.
-        arr = np.array(["1600-01-01"], dtype=f"M8[{unit}]")
-        dta = DatetimeArray._simple_new(arr, dtype=arr.dtype)
-
-        # Asia/Kolkata observed LMT (UTC+05:53:28) for all dates before 1854
-        result = dta.tz_localize("UTC").tz_convert("Asia/Kolkata")
-        assert result[0].tz_localize(None) == pd.Timestamp("1600-01-01 05:53:28")
-        # and the original UTC instant is recovered
-        assert result.tz_convert("UTC").tz_localize(None)[0] == pd.Timestamp(
-            "1600-01-01"
-        )
-
-        # localize direction is affected by the same sentinel
-        localized = dta.tz_localize("Asia/Kolkata")
-        assert localized.tz_convert("UTC").tz_localize(None)[0] == pd.Timestamp(
-            "1599-12-31 18:06:32"
-        )
 
     @pytest.mark.filterwarnings("ignore:Converting to PeriodArray.*:UserWarning")
     def test_to_period(self, dta_dti):
@@ -180,7 +134,7 @@ class TestNonNano:
     def test_astype_object(self, dta):
         result = dta.astype(object)
         assert all(x._creso == dta._creso for x in result)
-        assert all(x == y for x, y in zip(result, dta, strict=True))
+        assert all(x == y for x, y in zip(result, dta))
 
     def test_to_pydatetime(self, dta_dti):
         dta, dti = dta_dti
@@ -242,16 +196,10 @@ class TestNonNano:
         tm.assert_numpy_array_equal(result, expected)
 
         if op not in [operator.eq, operator.ne]:
-            if is_numpy_dev or np_version_gt2_5:
-                # numpy now raises instead of silently overflowing
-                # https://github.com/numpy/numpy/pull/31085
-                with pytest.raises(OverflowError, match="Overflow"):
-                    op(left._ndarray, right._ndarray)
-            else:
-                # check that numpy still gets this wrong; if it is fixed we may
-                #  be able to remove compare_mismatched_resolutions
-                np_res = op(left._ndarray, right._ndarray)
-                tm.assert_numpy_array_equal(np_res[1:], ~expected[1:])
+            # check that numpy still gets this wrong; if it is fixed we may be
+            #  able to remove compare_mismatched_resolutions
+            np_res = op(left._ndarray, right._ndarray)
+            tm.assert_numpy_array_equal(np_res[1:], ~expected[1:])
 
     def test_add_mismatched_reso_doesnt_downcast(self):
         # https://github.com/pandas-dev/pandas/pull/48748#issuecomment-1260181008
@@ -329,6 +277,7 @@ class TestDatetimeArrayComparisons:
 
         dti = pd.date_range("2016-01-1", freq="MS", periods=9, tz=None)
         arr = dti._data
+        assert arr.freq == dti.freq
         assert arr.tz == dti.tz
 
         right = dti
@@ -347,16 +296,10 @@ class TestDatetimeArrayComparisons:
             tuple(right),
             right.astype(object),
         ]:
-            depr_msg = "Operation with tuple is deprecated."
-            warn = None
-            if isinstance(other, tuple):
-                warn = Pandas4Warning
-            with tm.assert_produces_warning(warn, match=depr_msg):
-                result = op(arr, other)
+            result = op(arr, other)
             tm.assert_numpy_array_equal(result, expected)
 
-            with tm.assert_produces_warning(warn, match=depr_msg):
-                result = op(other, arr)
+            result = op(other, arr)
             tm.assert_numpy_array_equal(result, expected)
 
 
@@ -508,6 +451,11 @@ class TestDatetimeArray:
         arr[0] = ts
         assert arr[0] == ts.tz_convert("US/Central")
 
+    def test_setitem_clears_freq(self):
+        a = pd.date_range("2000", periods=2, freq="D", tz="US/Central")._data
+        a[0] = pd.Timestamp("2000", tz="US/Central")
+        assert a.freq is None
+
     @pytest.mark.parametrize(
         "obj",
         [
@@ -550,9 +498,7 @@ class TestDatetimeArray:
 
     @pytest.mark.parametrize("method", ["pad", "backfill"])
     def test_fillna_preserves_tz(self, method):
-        dti = pd.date_range(
-            "2000-01-01", periods=5, freq="D", tz="US/Central", unit="ns"
-        )
+        dti = pd.date_range("2000-01-01", periods=5, freq="D", tz="US/Central")
         arr = DatetimeArray._from_sequence(dti, dtype=dti.dtype, copy=True)
         arr[2] = pd.NaT
 
@@ -612,7 +558,7 @@ class TestDatetimeArray:
 
     def test_array_interface_tz(self):
         tz = "US/Central"
-        data = pd.date_range("2017", periods=2, tz=tz, unit="ns")._data
+        data = pd.date_range("2017", periods=2, tz=tz)._data
         result = np.asarray(data)
 
         expected = np.array(
@@ -635,7 +581,7 @@ class TestDatetimeArray:
         tm.assert_numpy_array_equal(result, expected)
 
     def test_array_interface(self):
-        data = pd.date_range("2017", periods=2, unit="ns")._data
+        data = pd.date_range("2017", periods=2)._data
         expected = np.array(
             ["2017-01-01T00:00:00", "2017-01-02T00:00:00"], dtype="datetime64[ns]"
         )
@@ -691,11 +637,11 @@ class TestDatetimeArray:
             1,
             np.int64(1),
             1.0,
-            np.timedelta64("NaT", "ns"),
+            np.timedelta64("NaT"),
             pd.Timedelta(days=2),
             "invalid",
             np.arange(10, dtype="i8") * 24 * 3600 * 10**9,
-            np.arange(10, dtype="i8").view("timedelta64[ns]") * 24 * 3600 * 10**9,
+            np.arange(10).view("timedelta64[ns]") * 24 * 3600 * 10**9,
             pd.Timestamp("2021-01-01").to_period("D"),
         ],
     )
@@ -823,13 +769,11 @@ class TestDatetimeArray:
     @pytest.mark.parametrize("freq_depr", ["2MIN", "2nS", "2Us"])
     def test_date_range_uppercase_frequency_deprecated(self, freq_depr):
         # GH#9586, GH#54939
-        depr_msg = (
-            f"'{freq_depr[1:]}' is deprecated and will be removed in a "
-            f"future version, please use '{freq_depr.lower()[1:]}' instead."
-        )
+        depr_msg = f"'{freq_depr[1:]}' is deprecated and will be removed in a "
+        f"future version. Please use '{freq_depr.lower()[1:]}' instead."
 
         expected = pd.date_range("1/1/2000", periods=4, freq=freq_depr.lower())
-        with tm.assert_produces_warning(Pandas4Warning, match=depr_msg):
+        with tm.assert_produces_warning(FutureWarning, match=depr_msg):
             result = pd.date_range("1/1/2000", periods=4, freq=freq_depr)
         tm.assert_index_equal(result, expected)
 
@@ -858,7 +802,7 @@ class TestDatetimeArray:
         depr_msg = "'w' is deprecated and will be removed in a future version"
 
         expected = pd.date_range("1/1/2000", periods=4, freq="2W")
-        with tm.assert_produces_warning(Pandas4Warning, match=depr_msg):
+        with tm.assert_produces_warning(FutureWarning, match=depr_msg):
             result = pd.date_range("1/1/2000", periods=4, freq="2w")
         tm.assert_index_equal(result, expected)
 

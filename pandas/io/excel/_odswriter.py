@@ -6,6 +6,8 @@ import json
 from typing import (
     TYPE_CHECKING,
     Any,
+    DefaultDict,
+    cast,
     overload,
 )
 
@@ -28,13 +30,13 @@ if TYPE_CHECKING:
     from pandas.io.formats.excel import ExcelCell
 
 
-class ODSWriter(ExcelWriter["OpenDocumentSpreadsheet"]):
+class ODSWriter(ExcelWriter):
     _engine = "odf"
     _supported_extensions = (".ods",)
 
     def __init__(  # pyright: ignore[reportInconsistentConstructor]
         self,
-        path: FilePath | WriteExcelBuffer | ExcelWriter[Any],
+        path: FilePath | WriteExcelBuffer | ExcelWriter,
         engine: str | None = None,
         date_format: str | None = None,
         datetime_format: str | None = None,
@@ -97,24 +99,16 @@ class ODSWriter(ExcelWriter["OpenDocumentSpreadsheet"]):
         startrow: int = 0,
         startcol: int = 0,
         freeze_panes: tuple[int, int] | None = None,
-        autofilter_range: str | None = None,
     ) -> None:
         """
         Write the frame cells using odf
         """
-
-        if autofilter_range:
-            raise ValueError("Autofilter is not supported with odf!")
-
         from odf.table import (
             Table,
             TableCell,
             TableRow,
         )
-        from odf.text import (
-            LineBreak,
-            P,
-        )
+        from odf.text import P
 
         sheet_name = self._get_sheet_name(sheet_name)
         assert sheet_name is not None
@@ -126,13 +120,14 @@ class ODSWriter(ExcelWriter["OpenDocumentSpreadsheet"]):
             self.book.spreadsheet.addElement(wks)
 
         if validate_freeze_panes(freeze_panes):
+            freeze_panes = cast(tuple[int, int], freeze_panes)
             self._create_freeze_panes(sheet_name, freeze_panes)
 
         for _ in range(startrow):
             wks.addElement(TableRow())
 
-        rows: defaultdict[int, TableRow] = defaultdict(TableRow)
-        col_count: defaultdict[int, int] = defaultdict(int)
+        rows: DefaultDict = defaultdict(TableRow)
+        col_count: DefaultDict = defaultdict(int)
 
         for cell in sorted(cells, key=lambda cell: (cell.row, cell.col)):
             # only add empty cells if the row is still empty
@@ -148,17 +143,7 @@ class ODSWriter(ExcelWriter["OpenDocumentSpreadsheet"]):
             pvalue, tc = self._make_table_cell(cell)
             rows[cell.row].addElement(tc)
             col_count[cell.row] += 1
-            if isinstance(pvalue, str) and "\n" in pvalue:
-                # GH#55728: a newline inside the paragraph text is collapsed to
-                # a space by ODF consumers, so each line break is written as a
-                # <text:line-break/> element instead.
-                lines = pvalue.split("\n")
-                p = P(text=lines[0])
-                for line in lines[1:]:
-                    p.addElement(LineBreak())
-                    p.addText(line)
-            else:
-                p = P(text=pvalue)
+            p = P(text=pvalue)
             tc.addElement(p)
 
         # add all rows to the sheet
@@ -261,7 +246,7 @@ class ODSWriter(ExcelWriter["OpenDocumentSpreadsheet"]):
     def _process_style(self, style: None) -> None: ...
 
     def _process_style(self, style: dict[str, Any] | None) -> str | None:
-        """Convert a style dictionary to an OpenDocument style sheet
+        """Convert a style dictionary to a OpenDocument style sheet
 
         Parameters
         ----------
@@ -285,7 +270,7 @@ class ODSWriter(ExcelWriter["OpenDocumentSpreadsheet"]):
         style_key = json.dumps(style)
         if style_key in self._style_dict:
             return self._style_dict[style_key]
-        name = f"pd{len(self._style_dict) + 1}"
+        name = f"pd{len(self._style_dict)+1}"
         self._style_dict[style_key] = name
         odf_style = Style(name=name, family="table-cell")
         if "font" in style:

@@ -22,7 +22,6 @@ from pandas._libs.khash cimport (
     kh_int64_t,
     kh_pymap_t,
     kh_str_t,
-    kh_strview_t,
     kh_uint8_t,
     kh_uint16_t,
     kh_uint32_t,
@@ -42,7 +41,7 @@ cdef class HashTable:
 
 cdef class UInt64HashTable(HashTable):
     cdef kh_uint64_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, uint64_t val)
@@ -52,7 +51,7 @@ cdef class UInt64HashTable(HashTable):
 
 cdef class Int64HashTable(HashTable):
     cdef kh_int64_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, int64_t val)
@@ -62,7 +61,7 @@ cdef class Int64HashTable(HashTable):
 
 cdef class UInt32HashTable(HashTable):
     cdef kh_uint32_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, uint32_t val)
@@ -72,7 +71,7 @@ cdef class UInt32HashTable(HashTable):
 
 cdef class Int32HashTable(HashTable):
     cdef kh_int32_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, int32_t val)
@@ -82,7 +81,7 @@ cdef class Int32HashTable(HashTable):
 
 cdef class UInt16HashTable(HashTable):
     cdef kh_uint16_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, uint16_t val)
@@ -92,7 +91,7 @@ cdef class UInt16HashTable(HashTable):
 
 cdef class Int16HashTable(HashTable):
     cdef kh_int16_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, int16_t val)
@@ -102,7 +101,7 @@ cdef class Int16HashTable(HashTable):
 
 cdef class UInt8HashTable(HashTable):
     cdef kh_uint8_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, uint8_t val)
@@ -112,7 +111,7 @@ cdef class UInt8HashTable(HashTable):
 
 cdef class Int8HashTable(HashTable):
     cdef kh_int8_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, int8_t val)
@@ -122,7 +121,7 @@ cdef class Int8HashTable(HashTable):
 
 cdef class Float64HashTable(HashTable):
     cdef kh_float64_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, float64_t val)
@@ -132,7 +131,7 @@ cdef class Float64HashTable(HashTable):
 
 cdef class Float32HashTable(HashTable):
     cdef kh_float32_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, float32_t val)
@@ -142,7 +141,7 @@ cdef class Float32HashTable(HashTable):
 
 cdef class Complex64HashTable(HashTable):
     cdef kh_complex64_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, complex64_t val)
@@ -152,7 +151,7 @@ cdef class Complex64HashTable(HashTable):
 
 cdef class Complex128HashTable(HashTable):
     cdef kh_complex128_t *table
-    cdef Py_ssize_t na_position
+    cdef int64_t na_position
     cdef bint uses_mask
 
     cpdef get_item(self, complex128_t val)

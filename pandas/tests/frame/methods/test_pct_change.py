@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-import pandas as pd
+from pandas import (
+    DataFrame,
+    Series,
+)
 import pandas._testing as tm
 
 
@@ -22,7 +25,7 @@ class TestDataFramePctChange:
 
     def test_pct_change_numeric(self):
         # GH#11150
-        pnl = pd.DataFrame(
+        pnl = DataFrame(
             [np.arange(0, 40, 10), np.arange(0, 40, 10), np.arange(0, 40, 10)]
         ).astype(np.float64)
         pnl.iat[1, 0] = np.nan
@@ -54,13 +57,13 @@ class TestDataFramePctChange:
         )
 
     def test_pct_change_shift_over_nas(self):
-        s = pd.Series([1.0, 1.5, np.nan, 2.5, 3.0])
+        s = Series([1.0, 1.5, np.nan, 2.5, 3.0])
 
-        df = pd.DataFrame({"a": s, "b": s})
+        df = DataFrame({"a": s, "b": s})
 
         chg = df.pct_change()
-        expected = pd.Series([np.nan, 0.5, np.nan, np.nan, 0.2])
-        edf = pd.DataFrame({"a": expected, "b": expected})
+        expected = Series([np.nan, 0.5, np.nan, np.nan, 0.2])
+        edf = DataFrame({"a": expected, "b": expected})
         tm.assert_frame_equal(chg, edf)
 
     @pytest.mark.parametrize(
@@ -82,9 +85,7 @@ class TestDataFramePctChange:
         rs_periods = datetime_frame.pct_change(periods)
         tm.assert_frame_equal(rs_freq, rs_periods)
 
-        empty_ts = pd.DataFrame(
-            index=datetime_frame.index, columns=datetime_frame.columns
-        )
+        empty_ts = DataFrame(index=datetime_frame.index, columns=datetime_frame.columns)
         rs_freq = empty_ts.pct_change(freq=freq)
         rs_periods = empty_ts.pct_change(periods)
         tm.assert_frame_equal(rs_freq, rs_periods)
@@ -92,14 +93,14 @@ class TestDataFramePctChange:
 
 def test_pct_change_with_duplicated_indices():
     # GH30463
-    data = pd.DataFrame(
+    data = DataFrame(
         {0: [np.nan, 1, 2, 3, 9, 18], 1: [0, 1, np.nan, 3, 9, 18]}, index=["a", "b"] * 3
     )
 
     result = data.pct_change()
 
     second_column = [np.nan, np.inf, np.nan, np.nan, 2.0, 1.0]
-    expected = pd.DataFrame(
+    expected = DataFrame(
         {0: [np.nan, np.nan, 1.0, 0.5, 2.0, 1.0], 1: second_column},
         index=["a", "b"] * 3,
     )
@@ -108,7 +109,7 @@ def test_pct_change_with_duplicated_indices():
 
 def test_pct_change_none_beginning():
     # GH#54481
-    df = pd.DataFrame(
+    df = DataFrame(
         [
             [1, None],
             [2, 1],
@@ -118,7 +119,7 @@ def test_pct_change_none_beginning():
         ]
     )
     result = df.pct_change()
-    expected = pd.DataFrame(
+    expected = DataFrame(
         {0: [np.nan, 1, 0.5, 1 / 3, 0.25], 1: [np.nan, np.nan, 1, 0.5, 1 / 3]}
     )
     tm.assert_frame_equal(result, expected)

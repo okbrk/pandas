@@ -60,6 +60,7 @@ from typing import (
 )
 import warnings
 
+from pandas._typing import F
 from pandas.util._exceptions import find_stack_level
 
 if TYPE_CHECKING:
@@ -69,12 +70,9 @@ if TYPE_CHECKING:
         Sequence,
     )
 
-    from pandas._typing import F
-
 
 class DeprecatedOption(NamedTuple):
     key: str
-    category: type[Warning]
     msg: str | None
     rkey: str | None
     removal_ver: str | None
@@ -118,25 +116,21 @@ class OptionError(AttributeError, KeyError):
     OptionError: No such option
     """
 
-    __module__ = "pandas.errors"
-
 
 #
 # User API
 
 
-def _get_single_key(pat: str, warn: bool = True, extra_stacklevel: int = 0) -> str:
+def _get_single_key(pat: str) -> str:
     keys = _select_options(pat)
     if len(keys) == 0:
-        if warn:
-            _warn_if_deprecated(pat, extra_stacklevel=extra_stacklevel)
+        _warn_if_deprecated(pat)
         raise OptionError(f"No such keys(s): {pat!r}")
     if len(keys) > 1:
         raise OptionError("Pattern matched multiple keys")
     key = keys[0]
 
-    if warn:
-        _warn_if_deprecated(key, extra_stacklevel=extra_stacklevel)
+    _warn_if_deprecated(key)
 
     key = _translate_key(key)
 
@@ -146,10 +140,6 @@ def _get_single_key(pat: str, warn: bool = True, extra_stacklevel: int = 0) -> s
 def get_option(pat: str) -> Any:
     """
     Retrieve the value of the specified option.
-
-    This method allows users to query the current value of a given option
-    in the pandas configuration system. Options control various display,
-    performance, and behavior-related settings within pandas.
 
     Parameters
     ----------
@@ -187,57 +177,22 @@ def get_option(pat: str) -> Any:
     >>> pd.get_option("display.max_columns")  # doctest: +SKIP
     4
     """
-    return _get_option_impl(pat)
-
-
-def _get_option_impl(pat: str, warn: bool = True) -> Any:
-    key = _get_single_key(pat, warn=warn)
+    key = _get_single_key(pat)
 
     # walk the nested dict
     root, k = _get_root(key)
     return root[k]
 
 
-def _set_option_impl(*args: Any, warn: bool = True, extra_stacklevel: int = 0) -> None:
-    # GH#63235: `warn` and `extra_stacklevel` let option_context warn exactly
-    # once, aimed at the caller rather than at contextlib.
-    # Handle dictionary input
-    if len(args) == 1 and isinstance(args[0], dict):
-        args = tuple(kv for item in args[0].items() for kv in item)
-
-    nargs = len(args)
-    if not nargs or nargs % 2 != 0:
-        raise ValueError("Must provide an even number of non-keyword arguments")
-
-    for k, v in zip(args[::2], args[1::2], strict=True):
-        key = _get_single_key(k, warn=warn, extra_stacklevel=extra_stacklevel)
-
-        opt = _get_registered_option(key)
-        if opt and opt.validator:
-            opt.validator(v)
-
-        # walk the nested dict
-        root, k_root = _get_root(key)
-        root[k_root] = v
-
-        if opt is not None and opt.cb:
-            opt.cb(key)
-
-
-def set_option(*args: Any) -> None:
+def set_option(*args) -> None:
     """
     Set the value of the specified option or options.
 
-    This method allows fine-grained control over the behavior and display settings
-    of pandas. Options affect various functionalities such as output formatting,
-    display limits, and operational behavior. Settings can be modified at runtime
-    without requiring changes to global configurations or environment variables.
-
     Parameters
     ----------
-    *args : str | object | dict
-        Arguments provided in pairs, which will be interpreted as (pattern, value),
-        or as a single dictionary containing multiple option-value pairs.
+    *args : str | object
+        Arguments provided in pairs, which will be interpreted as (pattern, value)
+        pairs.
         pattern: str
         Regexp which should match a single option
         value: object
@@ -275,8 +230,6 @@ def set_option(*args: Any) -> None:
 
     Examples
     --------
-    Option-Value Pair Input:
-
     >>> pd.set_option("display.max_columns", 4)
     >>> df = pd.DataFrame([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]])
     >>> df
@@ -285,20 +238,25 @@ def set_option(*args: Any) -> None:
     1  6  7  ...  9  10
     [2 rows x 5 columns]
     >>> pd.reset_option("display.max_columns")
-
-    Dictionary Input:
-
-    >>> pd.set_option({"display.max_columns": 4, "display.precision": 1})
-    >>> df = pd.DataFrame([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]])
-    >>> df
-    0  1  ...  3   4
-    0  1  2  ...  4   5
-    1  6  7  ...  9  10
-    [2 rows x 5 columns]
-    >>> pd.reset_option("display.max_columns")
-    >>> pd.reset_option("display.precision")
     """
-    _set_option_impl(*args)
+    # must at least 1 arg deal with constraints later
+    nargs = len(args)
+    if not nargs or nargs % 2 != 0:
+        raise ValueError("Must provide an even number of non-keyword arguments")
+
+    for k, v in zip(args[::2], args[1::2]):
+        key = _get_single_key(k)
+
+        opt = _get_registered_option(key)
+        if opt and opt.validator:
+            opt.validator(v)
+
+        # walk the nested dict
+        root, k_root = _get_root(key)
+        root[k_root] = v
+
+        if opt.cb:
+            opt.cb(key)
 
 
 def describe_option(pat: str = "", _print_desc: bool = True) -> str | None:
@@ -358,11 +316,6 @@ def reset_option(pat: str) -> None:
     """
     Reset one or more options to their default value.
 
-    This method resets the specified pandas option(s) back to their default
-    values. It allows partial string matching for convenience, but users should
-    exercise caution to avoid unintended resets due to changes in option names
-    in future versions.
-
     Parameters
     ----------
     pat : str/regex
@@ -411,11 +364,9 @@ def reset_option(pat: str) -> None:
         set_option(k, _registered_options[k].defval)
 
 
-def get_default_val(pat: str) -> Any:
+def get_default_val(pat: str):
     key = _get_single_key(pat)
-    opt = _get_registered_option(key)
-    assert opt is not None
-    return opt.defval
+    return _get_registered_option(key).defval
 
 
 class DictWrapper:
@@ -439,7 +390,7 @@ class DictWrapper:
         else:
             raise OptionError("You can only set the value of existing options")
 
-    def __getattr__(self, key: str) -> Any:
+    def __getattr__(self, key: str):
         prefix = object.__getattribute__(self, "prefix")
         if prefix:
             prefix += "."
@@ -458,29 +409,21 @@ class DictWrapper:
 
 
 options = DictWrapper(_global_config)
-# DictWrapper defines a custom setattr
-object.__setattr__(options, "__module__", "pandas")
 
 #
 # Functions for use by pandas developers, in addition to User - api
 
 
 @contextmanager
-def option_context(*args: Any) -> Generator[None]:
+def option_context(*args) -> Generator[None]:
     """
     Context manager to temporarily set options in a ``with`` statement.
 
-    This method allows users to set one or more pandas options temporarily
-    within a controlled block. The previous options' values are restored
-    once the block is exited. This is useful when making temporary adjustments
-    to pandas' behavior without affecting the global state.
-
     Parameters
     ----------
-    *args : str | object | dict
+    *args : str | object
         An even amount of arguments provided in pairs which will be
-        interpreted as (pattern, value) pairs. Alternatively, a single
-        dictionary of {pattern: value} may be provided.
+        interpreted as (pattern, value) pairs.
 
     Returns
     -------
@@ -509,32 +452,22 @@ def option_context(*args: Any) -> Generator[None]:
     >>> from pandas import option_context
     >>> with option_context("display.max_rows", 10, "display.max_columns", 5):
     ...     pass
-    >>> with option_context({"display.max_rows": 10, "display.max_columns": 5}):
-    ...     pass
     """
-    if len(args) == 1 and isinstance(args[0], dict):
-        args = tuple(kv for item in args[0].items() for kv in item)
-
     if len(args) % 2 != 0 or len(args) < 2:
         raise ValueError(
             "Provide an even amount of arguments as "
             "option_context(pat, val, pat, val...)."
         )
 
-    ops = tuple(zip(args[::2], args[1::2], strict=True))
-    undo: tuple[tuple[Any, Any], ...] = ()
+    ops = tuple(zip(args[::2], args[1::2]))
     try:
-        # GH#63235: a deprecated option must warn exactly once per option_context,
-        # so only the entry below warns; reading the old value and restoring it are
-        # bookkeeping the user did not ask for. extra_stacklevel=1 skips the
-        # contextlib.__enter__ frame so the warning lands on the ``with`` statement.
-        undo = tuple((pat, _get_option_impl(pat, warn=False)) for pat, val in ops)
+        undo = tuple((pat, get_option(pat)) for pat, val in ops)
         for pat, val in ops:
-            _set_option_impl(pat, val, extra_stacklevel=1)
+            set_option(pat, val)
         yield
     finally:
         for pat, val in undo:
-            _set_option_impl(pat, val, warn=False)
+            set_option(pat, val)
 
 
 def register_option(
@@ -604,12 +537,6 @@ def register_option(
     if not isinstance(cursor, dict):
         raise OptionError(msg.format(option=".".join(path[:-1])))
 
-    # a namespace already lives here, i.e. `key` is a path prefix to one or
-    # more already-registered options; registering it would clobber them
-    # (GH#29242)
-    if isinstance(cursor.get(path[-1]), dict):
-        raise OptionError(f"Option '{key}' is a prefix of an already-registered option")
-
     cursor[path[-1]] = defval  # initialize
 
     # save the option metadata
@@ -620,7 +547,6 @@ def register_option(
 
 def deprecate_option(
     key: str,
-    category: type[Warning],
     msg: str | None = None,
     rkey: str | None = None,
     removal_ver: str | None = None,
@@ -640,8 +566,6 @@ def deprecate_option(
     key : str
         Name of the option to be deprecated.
         must be a fully-qualified option name (e.g "x.y.z.rkey").
-    category : Warning
-        Warning class for the deprecation.
     msg : str, optional
         Warning message to output when the key is referenced.
         if no message is given a default message will be emitted.
@@ -665,7 +589,7 @@ def deprecate_option(
     if key in _deprecated_options:
         raise OptionError(f"Option '{key}' has already been defined as deprecated.")
 
-    _deprecated_options[key] = DeprecatedOption(key, category, msg, rkey, removal_ver)
+    _deprecated_options[key] = DeprecatedOption(key, msg, rkey, removal_ver)
 
 
 #
@@ -698,7 +622,7 @@ def _get_root(key: str) -> tuple[dict[str, Any], str]:
     return cursor, path[-1]
 
 
-def _get_deprecated_option(key: str) -> DeprecatedOption | None:
+def _get_deprecated_option(key: str):
     """
     Retrieves the metadata for a deprecated option, if `key` is deprecated.
 
@@ -714,7 +638,7 @@ def _get_deprecated_option(key: str) -> DeprecatedOption | None:
         return d
 
 
-def _get_registered_option(key: str) -> RegisteredOption | None:
+def _get_registered_option(key: str):
     """
     Retrieves the option metadata if `key` is a registered option.
 
@@ -727,8 +651,8 @@ def _get_registered_option(key: str) -> RegisteredOption | None:
 
 def _translate_key(key: str) -> str:
     """
-    if `key` is deprecated and a replacement key defined, will return the
-    replacement key, otherwise returns `key` as-is
+    if key id deprecated and a replacement key defined, will return the
+    replacement key, otherwise returns `key` as - is
     """
     d = _get_deprecated_option(key)
     if d:
@@ -737,7 +661,7 @@ def _translate_key(key: str) -> str:
         return key
 
 
-def _warn_if_deprecated(key: str, extra_stacklevel: int = 0) -> bool:
+def _warn_if_deprecated(key: str) -> bool:
     """
     Checks if `key` is a deprecated option and if so, prints a warning.
 
@@ -747,12 +671,11 @@ def _warn_if_deprecated(key: str, extra_stacklevel: int = 0) -> bool:
     """
     d = _get_deprecated_option(key)
     if d:
-        stacklevel = find_stack_level() + extra_stacklevel
         if d.msg:
             warnings.warn(
                 d.msg,
-                d.category,
-                stacklevel=stacklevel,
+                FutureWarning,
+                stacklevel=find_stack_level(),
             )
         else:
             msg = f"'{key}' is deprecated"
@@ -763,11 +686,7 @@ def _warn_if_deprecated(key: str, extra_stacklevel: int = 0) -> bool:
             else:
                 msg += ", please refrain from using it."
 
-            warnings.warn(
-                msg,
-                d.category,
-                stacklevel=stacklevel,
-            )
+            warnings.warn(msg, FutureWarning, stacklevel=find_stack_level())
         return True
     return False
 
@@ -776,7 +695,6 @@ def _build_option_description(k: str) -> str:
     """Builds a formatted description of a registered option and prints it"""
     o = _get_registered_option(k)
     d = _get_deprecated_option(k)
-    assert o is not None
 
     s = f"{k} "
 
@@ -834,11 +752,11 @@ def config_prefix(prefix: str) -> Generator[None]:
     global register_option, get_option, set_option
 
     def wrap(func: F) -> F:
-        def inner(key: str, *args: object, **kwds: object) -> object:
+        def inner(key: str, *args, **kwds):
             pkey = f"{prefix}.{key}"
             return func(pkey, *args, **kwds)
 
-        return cast("F", inner)
+        return cast(F, inner)
 
     _register_option = register_option
     _get_option = get_option
@@ -872,7 +790,7 @@ def is_type_factory(_type: type[Any]) -> Callable[[Any], None]:
 
     """
 
-    def inner(x: object) -> None:
+    def inner(x) -> None:
         if type(x) != _type:
             raise ValueError(f"Value must have type '{_type}'")
 
@@ -897,18 +815,18 @@ def is_instance_factory(_type: type | tuple[type, ...]) -> Callable[[Any], None]
     else:
         type_repr = f"'{_type}'"
 
-    def inner(x: object) -> None:
+    def inner(x) -> None:
         if not isinstance(x, _type):
             raise ValueError(f"Value must be an instance of {type_repr}")
 
     return inner
 
 
-def is_one_of_factory(legal_values: Sequence[Any]) -> Callable[[Any], None]:
+def is_one_of_factory(legal_values: Sequence) -> Callable[[Any], None]:
     callables = [c for c in legal_values if callable(c)]
     legal_values = [c for c in legal_values if not callable(c)]
 
-    def inner(x: object) -> None:
+    def inner(x) -> None:
         if x not in legal_values:
             if not any(c(x) for c in callables):
                 uvals = [str(lval) for lval in legal_values]
@@ -971,11 +889,3 @@ def is_callable(obj: object) -> bool:
     if not callable(obj):
         raise ValueError("Value must be a callable")
     return True
-
-
-# import set_module here would cause circular import
-get_option.__module__ = "pandas"
-set_option.__module__ = "pandas"
-describe_option.__module__ = "pandas"
-reset_option.__module__ = "pandas"
-option_context.__module__ = "pandas"

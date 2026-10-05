@@ -28,12 +28,12 @@ if TYPE_CHECKING:
     )
 
 
-def _check_is_partition(parts: Iterable[Iterable[int]], whole: Iterable[int]) -> None:
+def _check_is_partition(parts: Iterable, whole: Iterable) -> None:
     whole = set(whole)
-    part_sets = [set(part) for part in parts]
-    if set.intersection(*part_sets) != set():
+    parts = [set(x) for x in parts]
+    if set.intersection(*parts) != set():
         raise ValueError("Is not a partition because intersection is not null.")
-    if set.union(*part_sets) != whole:
+    if set.union(*parts) != whole:
         raise ValueError("Is not a partition because union is not the whole.")
 
 
@@ -79,7 +79,7 @@ def _levels_to_axis(
         ax_coords = codes[valid_ilocs]
 
     ax_labels = ax_labels.tolist()
-    return ax_coords, ax_labels  # pyright: ignore[reportReturnType]
+    return ax_coords, ax_labels
 
 
 def _to_ijv(

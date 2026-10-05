@@ -122,16 +122,16 @@ Here's a typical workflow for triaging a newly opened issue.
 
 7. **What labels and milestones should I add?**
 
-   Apply the relevant `labels <https://github.com/pandas-dev/pandas/labels>`_ that would help
-   other users and maintainers find this issue. Generally labels fall into:
+   Apply the relevant labels. This is a bit of an art, and comes with experience.
+   Look at similar issues to get a feel for how things are labeled.
 
-   * Project topics (e.g. "CI", "Web", "Community")
-   * Specific topic or API in the pandas library (e.g. "Sorting", "Index")
+   If the issue is clearly defined and the fix seems relatively straightforward,
+   label the issue as "Good first issue".
 
    If the issue is a regression report, add the "Regression" label and the next patch
    release milestone.
 
-   Once you have triaged and validated the issue, make sure to remove the "Needs Triage" label.
+   Once you have completed the above, make sure to remove the "Needs Triage" label.
 
 .. _maintaining.regressions:
 
@@ -218,11 +218,11 @@ pandas supports point releases (e.g. ``1.4.3``) that aim to:
 
 1. Fix bugs in new features introduced in the first minor version release.
 
-   * e.g. If a new feature was added in ``1.4`` and contains a bug, a fix can be applied in ``1.4.3``
+  * e.g. If a new feature was added in ``1.4`` and contains a bug, a fix can be applied in ``1.4.3``
 
 2. Fix bugs that used to work in a few minor releases prior. There should be agreement between core team members that a backport is appropriate.
 
-   * e.g. If a feature worked in ``1.2`` and stopped working since ``1.3``, a fix can be applied in ``1.4.3``.
+  * e.g. If a feature worked in ``1.2`` and stopped working since ``1.3``, a fix can be applied in ``1.4.3``.
 
 Since pandas minor releases are based on GitHub branches (e.g. point release of ``1.4`` are based off the ``1.4.x`` branch),
 "backporting" means merging a pull request fix to the ``main`` branch and correct minor branch associated with the next point release.
@@ -250,7 +250,7 @@ and that's best done by ensuring that the quality of our open issues is high.
 
 Occasionally, bugs are fixed but the issue isn't linked to in the Pull Request.
 In these cases, comment that "This has been fixed, but could use a test." and
-label the issue as "Needs Test".
+label the issue as "Good First Issue" and "Needs Test".
 
 If an older issue doesn't follow our issue template, edit the original post to
 include a minimal example, the actual output, and the expected output. Uniformity
@@ -274,7 +274,8 @@ so passes with no response, thank them for their work and then either:
   across the line, or for fixing a small merge conflict.
 
 If closing the pull request, then please comment on the original issue that
-"There's a stalled PR at #1234 that may be helpful."
+"There's a stalled PR at #1234 that may be helpful.", and perhaps label the issue
+as "Good first issue" if the PR was relatively close to being accepted.
 
 Becoming a pandas maintainer
 ----------------------------
@@ -288,8 +289,8 @@ The required steps for adding a maintainer are:
 1. Contact the contributor and ask their interest to join.
 2. Add the contributor to the appropriate `GitHub Team <https://github.com/orgs/pandas-dev/teams>`_ if accepted the invitation.
 
-   * ``pandas-core`` is for core team members
-   * ``pandas-triage`` is for pandas triage members
+  * ``pandas-core`` is for core team members
+  * ``pandas-triage`` is for pandas triage members
 
 If adding to ``pandas-core``, there are two additional steps:
 
@@ -362,7 +363,8 @@ In order to be able to release a new pandas version, the next permissions are ne
 - Merge rights to the `pandas <https://github.com/pandas-dev/pandas/>`_ and
   `pandas-feedstock <https://github.com/conda-forge/pandas-feedstock/>`_ repositories.
   For the latter, open a PR adding your GitHub username to the conda-forge recipe.
-- Permissions to push the new tags to the pandas repository.
+- Permissions to push to ``main`` in the pandas repository, to push the new tags.
+- `Write permissions to PyPI <https://github.com/conda-forge/pandas-feedstock/pulls>`_.
 - Access to our website / documentation server. Share your public key with the
   infrastructure committee to be added to the ``authorized_keys`` file of the main
   server user.
@@ -386,11 +388,8 @@ Pre-release
 
 3. Make sure the CI is green for the last commit of the branch being released.
 
-4. If not a release candidate, make sure all backporting pull requests to the
-   branch being released are merged, and no merged pull requests are missing a
-   backport (check the
-   `"Still Needs Manual Backport" <https://github.com/pandas-dev/pandas/labels/Still%20Needs%20Manual%20Backport>`__
-   label for this).
+4. If not a release candidate, make sure all backporting pull requests to the branch
+   being released are merged.
 
 5. Create a new issue and milestone for the version after the one being released.
    If the release was a release candidate, we would usually want to create issues and
@@ -404,86 +403,74 @@ Pre-release
 Release
 ```````
 
-Run ``scripts/push_tag_for_release.sh`` from the root of your pandas clone to initiate the
-release process by locally creating and pushing a tagged commit, triggering the release automation.
-Specify the version and branch to release as arguments.
+1. Create an empty commit and a tag in the last commit of the branch to be released::
 
-.. code-block:: bash
+    git checkout <branch>
+    git pull --ff-only upstream <branch>
+    git clean -xdf
+    git commit --allow-empty --author="pandas Development Team <pandas-dev@python.org>" -m "RLS: <version>"
+    git tag -a v<version> -m "Version <version>"  # NOTE that the tag is v1.5.2 with "v" not 1.5.2
+    git push upstream <branch> --follow-tags
 
-   # e.g. A patch release
-   scripts/push_tag_for_release.sh 3.0.5 3.0.x
-   # e.g. A release candidate
-   scripts/push_tag_for_release.sh 3.0.0rc0 main
+The docs for the new version will be built and published automatically with the docs job in the CI,
+which will be triggered when the tag is pushed.
 
-.. note::
+2. Only if the release is a release candidate, we want to create a new branch for it, immediately
+   after creating the tag. For example, if we are releasing pandas 1.4.0rc0, we would like to
+   create the branch 1.4.x to backport commits to the 1.4 versions. As well as create a tag to
+   mark the start of the development of 1.5.0 (assuming it is the next version)::
 
-   After releasing the first release candidate of a new version:
+    git checkout -b 1.4.x
+    git push upstream 1.4.x
+    git checkout main
+    git commit --allow-empty -m "Start 1.5.0"
+    git tag -a v1.5.0.dev0 -m "DEV: Start 1.5.0"
+    git push upstream main --follow-tags
 
-   - Create a maintenance branch. For example:
+3. Download the source distribution and wheels from the `wheel staging area <https://anaconda.org/scientific-python-nightly-wheels/pandas>`_.
+   Be careful to make sure that no wheels are missing (e.g. due to failed builds).
 
-   .. code-block:: bash
+   Running scripts/download_wheels.sh with the version that you want to download wheels/the sdist for should do the trick.
+   This script will make a ``dist`` folder inside your clone of pandas and put the downloaded wheels and sdist there::
 
-      git checkout main
-      git checkout -b 3.1.x
-      git push upstream 3.1.x
+    scripts/download_wheels.sh <VERSION>
 
-   - Start the development of the next version on ``main``
-     by pushing an empty commit and a ``dev0`` tag, e.g. for 3.2.0
+4. Create a `new GitHub release <https://github.com/pandas-dev/pandas/releases/new>`_:
 
-   .. code-block:: bash
+   - Tag: ``<version>``
+   - Title: ``pandas <version>``
+   - Description: Copy the description of the last release of the same kind (release candidate, major/minor or patch release)
+   - Files: ``pandas-<version>.tar.gz`` source distribution just generated
+   - Set as a pre-release: Only check for a release candidate
+   - Set as the latest release: Leave checked, unless releasing a patch release for an older version
+     (e.g. releasing 1.4.5 after 1.5 has been released)
 
-      git checkout main
-      git commit --allow-empty -m "Start 3.2.0"
-      git tag -a v3.2.0.dev0 -m "DEV: Start 3.2.0"
-      git push upstream main --follow-tags
+5. Upload wheels to PyPI::
 
-   - Update the GitHub milestone for the final release of the RC to backport
-     to the maintenance branch (e.g., 3.1.x).
+    twine upload pandas/dist/pandas-<version>*.{whl,tar.gz} --skip-existing
 
-The release automation will then:
+6. The GitHub release will after some hours trigger an
+   `automated conda-forge PR <https://github.com/conda-forge/pandas-feedstock/pulls>`_.
+   (If you don't want to wait, you can open an issue titled ``@conda-forge-admin, please update version`` to trigger the bot.)
+   Merge it once the CI is green, and it will generate the conda-forge packages.
 
-- Upload the source distribution and wheels to `PyPI <https://pypi.org/project/pandas/#history>`_ via
-  `"Trusted Publishing" <https://docs.pypi.org/trusted-publishers/>`__
-
-- Create a draft `GitHub release <https://github.com/pandas-dev/pandas/releases>`_ with the source distribution.
-
-   .. note::
-
-      By default, the new Github release will be marked as the latest release.
-      For patch releases for an older version, unmark it as the latest release on the Github release page.
-
-- Create an `automated conda-forge PR <https://github.com/conda-forge/pandas-feedstock/pulls>`_ from the new Github release.
-  This PR will need to be merged manually once its CI is green in order to generate conda-forge packages.
-
-   .. tip::
-
-      The automated conda-forge PR usually takes a while to generate. You can manually open
-      an `issue <https://github.com/conda-forge/pandas-feedstock/issues>`_ titled ``@conda-forge-admin, please update version``
-      to manually trigger the conda-forge PR.
-
-Then finally, verify that the upload to PyPI was successful, review the release
-notes of the GitHub release, and then publish the GitHub release.
+   In case a manual PR needs to be done, the version, sha256 and build fields are the
+   ones that usually need to be changed. If anything else in the recipe has changed since
+   the last release, those changes should be available in ``ci/meta.yaml``.
 
 Post-Release
 ````````````
 
 1. Update symlinks to stable documentation by logging in to our web server, and
-   editing ``/var/www/html/pandas-docs/stable`` to point to ``version/<X.Y>``
-   for major and minor releases, or ``version/<X.Y>`` to ``version/<patch>`` for
+   editing ``/var/www/html/pandas-docs/stable`` to point to ``version/<latest-version>``
+   for major and minor releases, or ``version/<minor>`` to ``version/<patch>`` for
    patch releases. The exact instructions are (replace the example version numbers by
    the appropriate ones for the version you are releasing):
 
-   - Log in to the server and use the correct user.
-   - ``cd /var/www/html/pandas-docs/``
-   - For a major or minor release (assuming the ``/version/2.1.0/`` docs have been uploaded to the server):
-
-     -  Create a new X.Y symlink to X.Y.Z: ``cd version; ln -sfn 2.1.0 2.1``
-     -  Update stable symlink to point to X.Y: ``ln -sfn version/2.1 stable``
-
-   - For a patch release (assuming the ``/version/2.1.3/`` docs have been uploaded to the server):
-
-     - Update the X.Y symlink to the new X.Y.Z patch version: ``cd version; ln -sfn 2.1.3 2.1``
-     - (the stable symlink should already be pointing to the correct X.Y version)
+    - Log in to the server and use the correct user.
+    - ``cd /var/www/html/pandas-docs/``
+    - ``ln -sfn version/2.1 stable`` (for a major or minor release)
+    - ``ln -sfn version/2.0.3 version/2.0`` (for a patch release)
 
 2. If releasing a major or minor release, open a PR in our source code to update
    ``web/pandas/versions.json``, to have the desired versions in the documentation
@@ -500,8 +487,8 @@ Post-Release
 6. Announce the new release in the official channels (use previous announcements
    for reference):
 
-   - The pandas-dev and pydata mailing lists
-   - X, Mastodon, Telegram and LinkedIn
+    - The pandas-dev and pydata mailing lists
+    - Twitter, Mastodon, Telegram and LinkedIn
 
 7. Update this release instructions to fix anything incorrect and to update about any
    change since the last release.

@@ -1,11 +1,11 @@
-from collections.abc import Sequence
-from typing import Self
+from typing import Sequence
 
 import numpy as np
 
 from pandas._typing import (
     AxisInt,
     DtypeObj,
+    Self,
     Shape,
 )
 

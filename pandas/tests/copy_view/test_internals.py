@@ -1,14 +1,17 @@
 import numpy as np
 import pytest
 
-import pandas as pd
+from pandas import (
+    DataFrame,
+    Series,
+)
 import pandas._testing as tm
 from pandas.tests.copy_view.util import get_array
 
 
 def test_consolidate():
     # create unconsolidated DataFrame
-    df = pd.DataFrame({"a": [1, 2, 3], "b": [0.1, 0.2, 0.3]})
+    df = DataFrame({"a": [1, 2, 3], "b": [0.1, 0.2, 0.3]})
     df["c"] = [4, 5, 6]
 
     # take a viewing subset
@@ -58,14 +61,14 @@ def test_iset_splits_blocks_inplace(locs, arr, dtype):
     # Nothing currently calls iset with
     # more than 1 loc with inplace=True (only happens with inplace=False)
     # but ensure that it works
-    df = pd.DataFrame(
+    df = DataFrame(
         {
             "a": [1, 2, 3],
             "b": [4, 5, 6],
             "c": [7, 8, 9],
             "d": [10, 11, 12],
             "e": [13, 14, 15],
-            "f": pd.Series(["a", "b", "c"], dtype=object),
+            "f": Series(["a", "b", "c"], dtype=object),
         },
     )
     arr = arr.astype(dtype)
@@ -81,13 +84,13 @@ def test_iset_splits_blocks_inplace(locs, arr, dtype):
 
 def test_exponential_backoff():
     # GH#55518
-    df = pd.DataFrame({"a": [1, 2, 3]})
+    df = DataFrame({"a": [1, 2, 3]})
     for i in range(490):
         df.copy(deep=False)
 
     assert len(df._mgr.blocks[0].refs.referenced_blocks) == 491
 
-    df = pd.DataFrame({"a": [1, 2, 3]})
+    df = DataFrame({"a": [1, 2, 3]})
     dfs = [df.copy(deep=False) for i in range(510)]
 
     for i in range(20):

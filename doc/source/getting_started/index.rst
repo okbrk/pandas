@@ -6,9 +6,6 @@
 Getting started
 ===============
 
-To quickly try pandas in your browser without installing anything, you can use
-the `Try pandas online <https://pandas.pydata.org/try.html>`__ page.
-
 Installation
 ------------
 
@@ -530,6 +527,7 @@ Data sets often contain more than just numerical data. pandas provides a wide ra
                 </div>
             </div>
         </div>
+
     </div>
     </div>
 

@@ -7,8 +7,12 @@ from io import StringIO
 
 import pytest
 
-import pandas as pd
+from pandas import DataFrame
 import pandas._testing as tm
+
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Passing a BlockManager to DataFrame:DeprecationWarning"
+)
 
 
 @pytest.mark.parametrize(
@@ -34,7 +38,7 @@ import pandas._testing as tm
 )
 def test_1000_sep_with_decimal(all_parsers, data, thousands, decimal):
     parser = all_parsers
-    expected = pd.DataFrame({"A": [1, 10], "B": [2334.01, 13], "C": [5, 10.0]})
+    expected = DataFrame({"A": [1, 10], "B": [2334.01, 13], "C": [5, 10.0]})
 
     if parser.engine == "pyarrow":
         msg = "The 'thousands' option is not supported with the 'pyarrow' engine"
@@ -58,7 +62,7 @@ def test_euro_decimal_format(all_parsers):
 3;878,158;108013,434;GHI;rez;2,735694704"""
 
     result = parser.read_csv(StringIO(data), sep=";", decimal=",")
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [
             [1, 1521.1541, 187101.9543, "ABC", "poi", 4.738797819],
             [2, 121.12, 14897.76, "DEF", "uyt", 0.377320872],

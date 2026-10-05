@@ -10,8 +10,6 @@ from collections.abc import (
     Iterator,
     Sequence,
 )
-from decimal import Decimal
-from functools import partial
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -25,7 +23,6 @@ import matplotlib as mpl
 import numpy as np
 
 from pandas._libs import lib
-from pandas._libs.tslibs.dtypes import FreqGroup
 from pandas.errors import AbstractMethodError
 from pandas.util._decorators import cache_readonly
 from pandas.util._exceptions import find_stack_level
@@ -33,7 +30,6 @@ from pandas.util._exceptions import find_stack_level
 from pandas.core.dtypes.common import (
     is_any_real_numeric_dtype,
     is_bool,
-    is_bool_dtype,
     is_float,
     is_float_dtype,
     is_hashable,
@@ -46,7 +42,6 @@ from pandas.core.dtypes.common import (
 )
 from pandas.core.dtypes.dtypes import (
     CategoricalDtype,
-    CategoricalDtypeType,
     ExtensionDtype,
 )
 from pandas.core.dtypes.generic import (
@@ -60,23 +55,19 @@ from pandas.core.dtypes.generic import (
 from pandas.core.dtypes.missing import isna
 
 import pandas.core.common as com
+from pandas.util.version import Version
 
 from pandas.io.formats.printing import pprint_thing
 from pandas.plotting._matplotlib import tools
-from pandas.plotting._matplotlib.converter import (
-    PeriodConverter,
-    plottable_types,
-    register_pandas_matplotlib_converters,
-)
+from pandas.plotting._matplotlib.converter import register_pandas_matplotlib_converters
 from pandas.plotting._matplotlib.groupby import reconstruct_data_with_by
 from pandas.plotting._matplotlib.misc import unpack_single_str_list
 from pandas.plotting._matplotlib.style import get_standard_colors
 from pandas.plotting._matplotlib.timeseries import (
+    decorate_axes,
     format_dateaxis,
-    get_period_offset,
     maybe_convert_index,
-    prepare_ts_data,
-    set_period_converter,
+    maybe_resample,
     use_dynamic_x,
 )
 from pandas.plotting._matplotlib.tools import (
@@ -94,7 +85,6 @@ if TYPE_CHECKING:
     from matplotlib.axis import Axis
     from matplotlib.figure import Figure
 
-    from pandas._libs.tslibs import BaseOffset
     from pandas._typing import (
         IndexLabel,
         NDFrameT,
@@ -110,7 +100,7 @@ if TYPE_CHECKING:
 
 
 def holds_integer(column: Index) -> bool:
-    return column.dtype.kind in "iu"
+    return column.inferred_type in {"integer", "mixed-integer"}
 
 
 def _color_in_style(style: str) -> bool:
@@ -168,16 +158,16 @@ class MPLPlot(ABC):
         xlabel: Hashable | None = None,
         ylabel: Hashable | None = None,
         fontsize: int | None = None,
-        secondary_y: bool | tuple[Hashable, ...] | list[Hashable] | np.ndarray = False,
+        secondary_y: bool | tuple | list | np.ndarray = False,
         colormap=None,
         table: bool = False,
         layout=None,
         include_bool: bool = False,
         column: IndexLabel | None = None,
         *,
-        logx: bool | Literal["sym"] | None = False,
-        logy: bool | Literal["sym"] | None = False,
-        loglog: bool | Literal["sym"] | None = False,
+        logx: bool | None | Literal["sym"] = False,
+        logy: bool | None | Literal["sym"] = False,
+        loglog: bool | None | Literal["sym"] = False,
         mark_right: bool = True,
         stacked: bool = False,
         label: Hashable | None = None,
@@ -194,8 +184,6 @@ class MPLPlot(ABC):
         # while column is not, only need `columns` in hist/box plot when it's DF
         # TODO: Might deprecate `column` argument in future PR (#28373)
         if isinstance(data, ABCDataFrame):
-            if self._kind in ("hist", "box") and not data.columns.is_unique:
-                raise ValueError("plotting requires unique column names")
             if column:
                 self.columns = com.maybe_make_list(column)
             elif self.by is None:
@@ -300,21 +288,6 @@ class MPLPlot(ABC):
 
         self.data = self._ensure_frame(self.data)
 
-        from pandas.plotting import plot_params
-
-        self.x_compat = plot_params["x_compat"]
-        if "x_compat" in self.kwds:
-            self.x_compat = bool(self.kwds.pop("x_compat"))
-
-    @final
-    def _is_ts_plot(self) -> bool:
-        # this is slightly deceptive
-        return not self.x_compat and self.use_index and self._use_dynamic_x()
-
-    @final
-    def _use_dynamic_x(self) -> bool:
-        return use_dynamic_x(self._get_ax(0), self.data.index)
-
     @final
     @staticmethod
     def _validate_sharex(sharex: bool | None, ax, by) -> bool:
@@ -334,8 +307,8 @@ class MPLPlot(ABC):
     def _validate_log_kwd(
         cls,
         kwd: str,
-        value: bool | Literal["sym"] | None,
-    ) -> bool | Literal["sym"] | None:
+        value: bool | None | Literal["sym"],
+    ) -> bool | None | Literal["sym"]:
         if (
             value is None
             or isinstance(value, bool)
@@ -431,7 +404,7 @@ class MPLPlot(ABC):
                     "When subplots is an iterable, each entry "
                     "should be a list/tuple of column names."
                 )
-            idx_locs = columns.get_indexer_for(group)  # type: ignore[arg-type]
+            idx_locs = columns.get_indexer_for(group)
             if (idx_locs == -1).any():
                 bad_labels = np.extract(idx_locs == -1, group)
                 raise ValueError(
@@ -447,7 +420,7 @@ class MPLPlot(ABC):
             seen_columns = seen_columns.union(unique_columns)
             out.append(tuple(idx_locs))
 
-        unseen_columns = columns.difference(seen_columns)  # type: ignore[arg-type]
+        unseen_columns = columns.difference(seen_columns)
         for column in unseen_columns:
             idx_loc = columns.get_loc(column)
             out.append((idx_loc,))
@@ -479,7 +452,7 @@ class MPLPlot(ABC):
 
         if self.style is not None:
             if isinstance(self.style, dict):
-                styles = [self.style[col] for col in self.columns if col in self.style]  # type: ignore[union-attr]  # pyright: ignore[reportOptionalIterable]
+                styles = [self.style[col] for col in self.columns if col in self.style]
             elif is_list_like(self.style):
                 styles = self.style
             else:
@@ -503,7 +476,7 @@ class MPLPlot(ABC):
             # This was originally written to use values.values before EAs
             #  were implemented; adding np.asarray(...) to keep consistent
             #  typing.
-            yield col, np.asarray(values._values)
+            yield col, np.asarray(values.values)
 
     def _get_nseries(self, data: Series | DataFrame) -> int:
         # When `by` is explicitly assigned, grouped data size will be defined, and
@@ -513,7 +486,7 @@ class MPLPlot(ABC):
         elif self.by is not None and self._kind == "hist":
             return len(self._grouped)
         elif self.by is not None and self._kind == "box":
-            return len(self.columns)  # type: ignore[arg-type]
+            return len(self.columns)
         else:
             return data.shape[1]
 
@@ -539,14 +512,7 @@ class MPLPlot(ABC):
     @staticmethod
     def _has_plotted_object(ax: Axes) -> bool:
         """check whether ax has data"""
-        return (
-            len(ax.lines) != 0
-            or len(ax.artists) != 0
-            or len(ax.containers) != 0
-            # scatter and area plots draw their data into a collection rather
-            # than into lines
-            or len(ax.collections) != 0
-        )
+        return len(ax.lines) != 0 or len(ax.artists) != 0 or len(ax.containers) != 0
 
     @final
     def _maybe_right_yaxis(self, ax: Axes, axes_num: int) -> Axes:
@@ -634,7 +600,7 @@ class MPLPlot(ABC):
         elif self.logy == "sym" or self.loglog == "sym":
             [a.set_yscale("symlog") for a in axes]
 
-        axes_seq = cast("Sequence[Axes]", axes)
+        axes_seq = cast(Sequence["Axes"], axes)
         return axes_seq, fig
 
     @property
@@ -669,14 +635,8 @@ class MPLPlot(ABC):
             return data
 
         # GH32073: cast to float if values contain nulled integers
-        # Same for Decimal EAs (e.g. pyarrow decimal), as box/kde/area can't
-        # mix Decimal with float
-        dtype = data.dtype
-        if isinstance(dtype, ExtensionDtype) and (
-            is_integer_dtype(dtype)
-            or is_float_dtype(dtype)
-            or is_bool_dtype(dtype)
-            or issubclass(dtype.type, Decimal)
+        if (is_integer_dtype(data.dtype) or is_float_dtype(data.dtype)) and isinstance(
+            data.dtype, ExtensionDtype
         ):
             return data.to_numpy(dtype="float", na_value=np.nan)
 
@@ -699,7 +659,7 @@ class MPLPlot(ABC):
             else:
                 data = data.to_frame(name=label)
         elif self._kind in ("hist", "box"):
-            cols = self.columns if self.by is None else self.columns + self.by  # type: ignore[operator]
+            cols = self.columns if self.by is None else self.columns + self.by
             data = data.loc[:, cols]
         return data
 
@@ -715,40 +675,24 @@ class MPLPlot(ABC):
         # GH16953, infer_objects is needed as fallback, for ``Series``
         # with ``dtype == object``
         data = data.infer_objects()
-        include_type = plottable_types()
+        include_type = [np.number, "datetime", "datetimetz", "timedelta"]
 
         # GH23719, allow plotting boolean
         if self.include_bool is True:
-            include_type.extend([bool, np.bool_])
+            include_type.append(np.bool_)
 
         # GH22799, exclude datetime-like type for boxplot
-        exclude_type = []
+        exclude_type = None
         if self._kind == "box":
             # TODO: change after solving issue 27881
             include_type = [np.number]
-            exclude_type = [np.timedelta64]
+            exclude_type = ["timedelta"]
 
-        # GH 18755, include numpy object and category type for scatter plot
+        # GH 18755, include object and category type for scatter plot
         if self._kind == "scatter":
-            include_type.extend([np.object_, CategoricalDtypeType, str, bytes])
+            include_type.extend(["object", "category", "string"])
 
-        # GH 64535 Utilize mgr subset instead of DataFrame select_dtypes
-        def dtype_predicate(dtype, types) -> bool:
-            type_ = dtype.type
-            return issubclass(type_, tuple(types)) or (
-                np.number in types
-                and getattr(dtype, "_is_numeric", False)
-                and not is_bool_dtype(dtype)
-            )
-
-        def predicate_for_plottability(blk_vals) -> bool:
-            dtype = blk_vals.dtype
-            is_included = dtype_predicate(dtype, include_type)
-            is_excluded = dtype_predicate(dtype, exclude_type)
-            return is_included and not is_excluded
-
-        mgr = data._mgr._get_data_subset(predicate_for_plottability)
-        numeric_data = data._constructor_from_mgr(mgr, axes=mgr.axes)
+        numeric_data = data.select_dtypes(include=include_type, exclude=exclude_type)
 
         is_empty = numeric_data.shape[-1] == 0
         # no non-numeric frames or series allowed
@@ -842,13 +786,7 @@ class MPLPlot(ABC):
         if self.title:
             if self.subplots:
                 if is_list_like(self.title):
-                    if not isinstance(self.subplots, bool):
-                        if len(self.subplots) != len(self.title):
-                            raise ValueError(
-                                f"The number of titles ({len(self.title)}) must equal "
-                                f"the number of subplots ({len(self.subplots)})."
-                            )
-                    elif len(self.title) != self.nseries:
+                    if len(self.title) != self.nseries:
                         raise ValueError(
                             "The length of `title` must equal the number "
                             "of columns if using `title` of type `list` "
@@ -857,7 +795,7 @@ class MPLPlot(ABC):
                             f"number of columns = {self.nseries}"
                         )
 
-                    for ax, title in zip(self.axes, self.title, strict=False):
+                    for ax, title in zip(self.axes, self.title):
                         ax.set_title(title)
                 else:
                     fig.suptitle(self.title)
@@ -934,7 +872,10 @@ class MPLPlot(ABC):
             if leg is not None:
                 title = leg.get_title().get_text()
                 # Replace leg.legend_handles because it misses marker info
-                handles = leg.legend_handles
+                if Version(mpl.__version__) < Version("3.7"):
+                    handles = leg.legendHandles
+                else:
+                    handles = leg.legend_handles
                 labels = [x.get_text() for x in leg.get_texts()]
 
             if self.legend:
@@ -970,9 +911,7 @@ class MPLPlot(ABC):
         """
         leg = ax.get_legend()
 
-        other_ax = cast(
-            "Axes", getattr(ax, "left_ax", None) or getattr(ax, "right_ax", None)
-        )
+        other_ax = getattr(ax, "left_ax", None) or getattr(ax, "right_ax", None)
         other_leg = None
         if other_ax is not None:
             other_leg = other_ax.get_legend()
@@ -1166,16 +1105,16 @@ class MPLPlot(ABC):
         Error bars can be specified in several ways:
             Series: the user provides a pandas.Series object of the same
                     length as the data
-            ndarray: provides an np.ndarray of the same length as the data
+            ndarray: provides a np.ndarray of the same length as the data
             DataFrame/dict: error values are paired with keys matching the
                     key in the plotted DataFrame
             str: the name of the column within the plotted DataFrame
 
         Asymmetrical error bars are also supported, however raw error values
-        must be provided in this case. For an ``N`` length :class:`Series`, a
+        must be provided in this case. For a ``N`` length :class:`Series`, a
         ``2xN`` array should be provided indicating lower and upper (or left
-        and right) errors. For an ``MxN`` :class:`DataFrame`, asymmetrical errors
-        should be in an ``Mx2xN`` array.
+        and right) errors. For a ``MxN`` :class:`DataFrame`, asymmetrical errors
+        should be in a ``Mx2xN`` array.
         """
         if err is None:
             return None, data
@@ -1200,7 +1139,7 @@ class MPLPlot(ABC):
 
         # errors are a column in the dataframe
         elif isinstance(err, str):
-            evalues = data[err]._values
+            evalues = data[err].values
             data = data[data.columns.drop(err)]
             err = np.atleast_2d(evalues)
             err = np.tile(err, (nseries, 1))
@@ -1256,7 +1195,7 @@ class MPLPlot(ABC):
     ) -> dict[str, Any]:
         errors = {}
 
-        for kw, flag in zip(["xerr", "yerr"], [xerr, yerr], strict=True):
+        for kw, flag in zip(["xerr", "yerr"], [xerr, yerr]):
             if flag:
                 err = self.errors[kw]
                 # user provided label-matched dataframe of errors
@@ -1274,10 +1213,15 @@ class MPLPlot(ABC):
 
     @final
     def _get_subplots(self, fig: Figure) -> list[Axes]:
+        if Version(mpl.__version__) < Version("3.8"):
+            Klass = mpl.axes.Subplot
+        else:
+            Klass = mpl.axes.Axes
+
         return [
             ax
             for ax in fig.get_axes()
-            if (isinstance(ax, mpl.axes.Axes) and ax.get_subplotspec() is not None)
+            if (isinstance(ax, Klass) and ax.get_subplotspec() is not None)
         ]
 
     @final
@@ -1380,19 +1324,9 @@ class ScatterPlot(PlanePlot):
             c = self.data.columns[c]
         self.c = c
 
-    @register_pandas_matplotlib_converters
     def _make_plot(self, fig: Figure) -> None:
         x, y, c, data = self.x, self.y, self.c, self.data
         ax = self.axes[0]
-
-        from pandas import Series
-
-        x_data = data[x]
-        s = Series(index=x_data)
-        if use_dynamic_x(ax, s.index):
-            s, index_freq = maybe_convert_index(ax, s)
-            freq, s = prepare_ts_data(s, ax, self.kwds, index_freq)
-            x_data = s.index
 
         c_is_column = is_hashable(c) and c in self.data.columns
 
@@ -1410,12 +1344,12 @@ class ScatterPlot(PlanePlot):
         else:
             label = None
 
-        # if a list of non-color strings is passed in as c, color points
+        # if a list of non color strings is passed in as c, color points
         # by uniqueness of the strings, such same strings get same color
         create_colors = not self._are_valid_colors(c_values)
         if create_colors:
             color_mapping = self._get_color_mapping(c_values)
-            c_values = [color_mapping[s] for s in c_values]  # pyright: ignore[reportOptionalIterable]
+            c_values = [color_mapping[s] for s in c_values]
 
             # build legend for labeling custom colors
             ax.legend(
@@ -1426,11 +1360,8 @@ class ScatterPlot(PlanePlot):
             )
 
         scatter = ax.scatter(
-            # matplotlib cannot consume ExtensionArrays directly; np.asarray
-            #  gives it either a plain ndarray or objects (e.g. Timestamp,
-            #  Period) that its unit converters understand.
-            np.asarray(x_data._values),
-            np.asarray(data[y]._values),
+            data[x].values,
+            data[y].values,
             c=c_values,
             label=label,
             cmap=cmap,
@@ -1460,12 +1391,7 @@ class ScatterPlot(PlanePlot):
         if len(errors_x) > 0 or len(errors_y) > 0:
             err_kwds = dict(errors_x, **errors_y)
             err_kwds["ecolor"] = scatter.get_facecolor()[0]
-            ax.errorbar(
-                np.asarray(data[x]._values),
-                np.asarray(data[y]._values),
-                linestyle="none",
-                **err_kwds,
-            )
+            ax.errorbar(data[x].values, data[y].values, linestyle="none", **err_kwds)
 
     def _get_c_values(self, color, color_by_categorical: bool, c_is_column: bool):
         c = self.c
@@ -1478,7 +1404,7 @@ class ScatterPlot(PlanePlot):
         elif color_by_categorical:
             c_values = self.data[c].cat.codes
         elif c_is_column:
-            c_values = self.data[c]._values
+            c_values = self.data[c].values
         else:
             c_values = c
         return c_values
@@ -1505,7 +1431,7 @@ class ScatterPlot(PlanePlot):
         cmap = mpl.colormaps.get_cmap(self.colormap)
         colors = cmap(np.linspace(0, 1, n_colors))  # RGB tuples
 
-        return dict(zip(unique, colors, strict=True))
+        return dict(zip(unique, colors))
 
     def _get_norm_and_cmap(self, c_values, color_by_categorical: bool):
         c = self.c
@@ -1565,21 +1491,16 @@ class HexBinPlot(PlanePlot):
         x, y, data, C = self.x, self.y, self.data, self.C
         ax = self.axes[0]
         # pandas uses colormap, matplotlib uses cmap.
-        cmap = mpl.colormaps.get_cmap(self.colormap) if self.colormap else None
+        cmap = self.colormap or "BuGn"
+        cmap = mpl.colormaps.get_cmap(cmap)
         cb = self.colorbar
 
         if C is None:
             c_values = None
         else:
-            c_values = np.asarray(data[C]._values)
+            c_values = data[C].values
 
-        ax.hexbin(
-            np.asarray(data[x]._values),
-            np.asarray(data[y]._values),
-            C=c_values,
-            cmap=cmap,
-            **self.kwds,
-        )
+        ax.hexbin(data[x].values, data[y].values, C=c_values, cmap=cmap, **self.kwds)
         if cb:
             self._plot_colorbar(ax, fig=fig)
 
@@ -1599,24 +1520,36 @@ class LinePlot(MPLPlot):
         return "line"
 
     def __init__(self, data, **kwargs) -> None:
+        from pandas.plotting import plot_params
+
         MPLPlot.__init__(self, data, **kwargs)
         if self.stacked:
             self.data = self.data.fillna(value=0)
+        self.x_compat = plot_params["x_compat"]
+        if "x_compat" in self.kwds:
+            self.x_compat = bool(self.kwds.pop("x_compat"))
+
+    @final
+    def _is_ts_plot(self) -> bool:
+        # this is slightly deceptive
+        return not self.x_compat and self.use_index and self._use_dynamic_x()
+
+    @final
+    def _use_dynamic_x(self) -> bool:
+        return use_dynamic_x(self._get_ax(0), self.data)
 
     def _make_plot(self, fig: Figure) -> None:
-        is_ts = self._is_ts_plot()
-        if is_ts:
-            ax0 = self._get_ax(0)
-            data, index_freq = maybe_convert_index(ax0, self.data)
+        if self._is_ts_plot():
+            data = maybe_convert_index(self._get_ax(0), self.data)
 
             x = data.index  # dummy, not used
-            plotf = partial(self._ts_plot, index_freq=index_freq)
+            plotf = self._ts_plot
             it = data.items()
         else:
             x = self._get_xticks()
             # error: Incompatible types in assignment (expression has type
-            # "Callable[[Axes, Any, ndarray[tuple[Any, ...], dtype[Any]], Any,
-            # Any, Any, KwArg(Any)], Any]", variable has type "partial[Any]")
+            # "Callable[[Any, Any, Any, Any, Any, Any, KwArg(Any)], Any]", variable has
+            # type "Callable[[Any, Any, Any, Any, KwArg(Any)], Any]")
             plotf = self._plot  # type: ignore[assignment]
             # error: Incompatible types in assignment (expression has type
             # "Iterator[tuple[Hashable, ndarray[Any, Any]]]", variable has
@@ -1627,12 +1560,6 @@ class LinePlot(MPLPlot):
         is_errorbar = com.any_not_none(*self.errors.values())
 
         colors = self._get_colors()
-        # Collect unique ts axes so date-axis formatting + xlim run once per
-        # axis at the end, not once per column (GH#61398).
-        ts_axes: list[Axes] = []
-        seen_ax_ids: set[int] = set()
-        # Index actually drawn on each ts axes, keyed by id(ax); see _ts_plot.
-        self._ts_index: dict[int, Index] = {}
         for i, (label, y) in enumerate(it):
             ax = self._get_ax(i)
             kwds = self.kwds.copy()
@@ -1666,16 +1593,9 @@ class LinePlot(MPLPlot):
             )
             self._append_legend_handles_labels(newlines[0], label)
 
-            if is_ts and id(ax) not in seen_ax_ids:
-                ts_axes.append(ax)
-                seen_ax_ids.add(id(ax))
-
-        if is_ts:
-            # TODO: GH28021, should find a way to change view limit on xaxis
-            for ax in ts_axes:
-                index = self._ts_index[id(ax)]
-                # TODO #54485
-                format_dateaxis(ax, ax.freq, index)  # type: ignore[attr-defined]
+            if self._is_ts_plot():
+                # reset of xlim should be used for ts data
+                # TODO: GH28021, should find a way to change view limit on xaxis
                 lines = get_all_lines(ax)
                 left, right = get_xlim(lines)
                 ax.set_xlim(left, right)
@@ -1702,32 +1622,26 @@ class LinePlot(MPLPlot):
         return lines
 
     @final
-    def _ts_plot(
-        self,
-        ax: Axes,
-        x,
-        data: Series,
-        style=None,
-        index_freq: str | None = None,
-        **kwds,
-    ):
+    def _ts_plot(self, ax: Axes, x, data: Series, style=None, **kwds):
         # accept x to be consistent with normal plot func,
         # x is not passed to tsplot as it uses data.index as x coordinate
         # column_num must be in kwds for stacking purpose
-        _freq, data = prepare_ts_data(data, ax, kwds, index_freq)
+        freq, data = maybe_resample(data, ax, kwds)
 
-        # prepare_ts_data set ax.freq and returned data re-expressed at that
-        # freq, so these two agree even when the series was re-expressed at
-        # the axes frequency.  The frame-level index would not (GH#64311).
-        self._ts_index[id(ax)] = data.index
-
+        # Set ax with freq info
+        decorate_axes(ax, freq)
+        # digging deeper
+        if hasattr(ax, "left_ax"):
+            decorate_axes(ax.left_ax, freq)
+        if hasattr(ax, "right_ax"):
+            decorate_axes(ax.right_ax, freq)
         # TODO #54485
         ax._plot_data.append((data, self._kind, kwds))  # type: ignore[attr-defined]
 
-        lines = self._plot(
-            ax, data.index, np.asarray(data._values), style=style, **kwds
-        )
-        # format_dateaxis and xlim are handled once per axis in _make_plot.
+        lines = self._plot(ax, data.index, np.asarray(data.values), style=style, **kwds)
+        # set date formatter, locators and rescale limits
+        # TODO #54485
+        format_dateaxis(ax, ax.freq, data.index)  # type: ignore[arg-type, attr-defined]
         return lines
 
     @final
@@ -1903,7 +1817,7 @@ class AreaPlot(LinePlot):
     def _post_plot_logic(self, ax: Axes, data) -> None:
         LinePlot._post_plot_logic(self, ax, data)
 
-        is_shared_y = len(ax.get_shared_y_axes().get_siblings(ax)) > 1
+        is_shared_y = len(list(ax.get_shared_y_axes())) > 0
         # do not override the default axis behaviour in case of shared y axes
         if self.ylim is None and not is_shared_y:
             if (data >= 0).all().all():
@@ -1941,6 +1855,7 @@ class BarPlot(MPLPlot):
         self.bar_width = width
         self._align = align
         self._position = position
+        self.tick_pos = np.arange(len(data))
 
         if is_list_like(bottom):
             bottom = np.array(bottom)
@@ -1952,76 +1867,6 @@ class BarPlot(MPLPlot):
         self.log = log
 
         MPLPlot.__init__(self, data, **kwargs)
-
-        if self._is_ts_plot():
-            self.tick_pos = np.array(
-                PeriodConverter.convert_from_freq(
-                    self._get_xticks(),
-                    self._ts_freq,
-                )
-            )
-            if self._use_dynamic_dateaxis and not self._rot_set:
-                # date tick labels placed by the dynamic locator read like
-                # those of a line plot, so match the line-plot default
-                self.rot = 0
-        else:
-            self.tick_pos = np.arange(len(data))
-
-    @cache_readonly
-    def _ts_freq(self) -> BaseOffset:
-        freq = get_period_offset(self._get_ax(0), self.data.index)
-        # only evaluated when _is_ts_plot() is True, which resolves the freq
-        # the same way and is False unless it resolves to a period alias
-        assert freq is not None
-        return freq
-
-    @cache_readonly
-    def _use_dynamic_dateaxis(self) -> bool:
-        # GH#1918: use the same dynamic date tick labeling as line plots.
-        # Restricted to vertical bars because format_dateaxis decorates the
-        # x-axis, which for barh is the value axis.
-        if self.orientation != "vertical" or not isinstance(
-            self.data.index, (ABCDatetimeIndex, ABCPeriodIndex)
-        ):
-            return False
-        if not self._is_ts_plot():
-            return False
-        # Only reached after tick_pos has been set to the period ordinals.
-        # Matplotlib holds axis coordinates as float64, which represents
-        # integers exactly only up to 2**53; nanosecond ordinals are ~1.6e18,
-        # so the half-unit bar padding rounds away, the axis limits collapse to
-        # a single value, and the dynamic locator is then handed a view spanning
-        # ~1e17 periods to walk.  Keep the fixed ticks for those.
-        if not bool(np.abs(self.tick_pos).max(initial=0) <= 2**53):
-            return False
-        # The dynamic locator anchors its tick grid on int(vmin), i.e. on the
-        # period *before* the view when the limits are fractional -- and the
-        # half-unit padding either side of the bars makes them fractional.  The
-        # grid steps one period at a time from there, so it covers every bar
-        # only when the bars themselves are one ordinal apart; the leading tick
-        # is then the sole one outside the view, where it is never drawn.  Bars
-        # spaced further apart (a multiplied freq such as '2D' or '3B') would
-        # get a grid that steps between them, labeling timestamps that have no
-        # bar, so those keep the fixed ticks.  Checking the spacing rather than
-        # freq.n also covers 'nB', whose period alias drops the multiplier.
-        freq = self._ts_freq
-        spacing = np.diff(self.tick_pos)
-        if spacing.size and not (spacing == freq.n).all():
-            return False
-        if freq.n != 1:
-            # Only the daily-and-finer finder steps its grid by the frequency's
-            # multiplier.  The monthly, quarterly and annual finders walk every
-            # period and mark each one a minor tick, so a multiplied frequency
-            # there would label ticks that fall between the bars.
-            # error: "BaseOffset" has no attribute "_period_dtype_code"
-            code = freq._period_dtype_code  # type: ignore[attr-defined]
-            if FreqGroup.from_period_dtype_code(code) in (
-                FreqGroup.FR_MTH,
-                FreqGroup.FR_QTR,
-                FreqGroup.FR_ANN,
-            ):
-                return False
-        return True
 
     @cache_readonly
     def ax_pos(self) -> np.ndarray:
@@ -2052,7 +1897,6 @@ class BarPlot(MPLPlot):
 
     # error: Signature of "_plot" incompatible with supertype "MPLPlot"
     @classmethod
-    @register_pandas_matplotlib_converters
     def _plot(  # type: ignore[override]
         cls,
         ax: Axes,
@@ -2076,30 +1920,7 @@ class BarPlot(MPLPlot):
         pos_prior = neg_prior = np.zeros(len(self.data))
         K = self.nseries
 
-        # GH#39320 plot timedeltas as integers, as matplotlib draws them;
-        # it would otherwise add int bottoms to them, deprecated in numpy 2.5
-        data = self.data.apply(
-            lambda col: (
-                col.fillna(np.timedelta64(0, "ns")).astype(np.int64)
-                if lib.is_np_dtype(col.dtype, "m")
-                else col.fillna(0)
-            )
-        )
-
-        _stacked_subplots_ind: dict[int, int] = {}
-        _stacked_subplots_offsets: dict[int, tuple[np.ndarray, np.ndarray]] = {}
-
-        self.subplots: list[Any]
-
-        if not isinstance(self.subplots, bool):
-            if bool(self.subplots) and self.stacked:
-                for i, sub_plot in enumerate(self.subplots):
-                    if len(sub_plot) <= 1:
-                        continue
-                    for plot in sub_plot:
-                        _stacked_subplots_ind[int(plot)] = i
-                    _stacked_subplots_offsets[i] = (pos_prior, neg_prior)
-
+        data = self.data.fillna(0)
         for i, (label, y) in enumerate(self._iter_data(data=data)):
             ax = self._get_ax(i)
             kwds = self.kwds.copy()
@@ -2125,45 +1946,13 @@ class BarPlot(MPLPlot):
             start = start + self._start_base
 
             kwds["align"] = self._align
-
-            if i in _stacked_subplots_ind:
-                offset_index = _stacked_subplots_ind[i]
-                pos_prior, neg_prior = _stacked_subplots_offsets[offset_index]
-                mask = y >= 0
-                start = np.where(mask, pos_prior, neg_prior) + self._start_base
+            if self.subplots:
                 w = self.bar_width / 2
                 rect = self._plot(
                     ax,
                     self.ax_pos + w,
                     y,
                     self.bar_width,
-                    start=start,
-                    label=label,
-                    log=self.log,
-                    **kwds,
-                )
-                pos_new = pos_prior + np.where(mask, y, 0)
-                neg_new = neg_prior + np.where(mask, 0, y)
-                _stacked_subplots_offsets[offset_index] = (pos_new, neg_new)
-
-            elif self.subplots:
-                if isinstance(self.subplots, list):
-                    subplot_columns = self.subplots[self._col_idx_to_axis_idx(i)]
-                    series_idx = subplot_columns.index(i)
-                    width = self.bar_width / len(subplot_columns)
-                else:
-                    series_idx = 0
-                    width = self.bar_width
-
-                if self._align == "edge":
-                    bar_position = self.ax_pos + self.bar_width / 2 + series_idx * width
-                else:
-                    bar_position = self.ax_pos + (series_idx + 0.5) * width
-                rect = self._plot(
-                    ax,
-                    bar_position,
-                    y,
-                    width,
                     start=start,
                     label=label,
                     log=self.log,
@@ -2200,75 +1989,16 @@ class BarPlot(MPLPlot):
                 )
             self._append_legend_handles_labels(rect, label)
 
-        if self._use_dynamic_dateaxis:
-            for ax in self.axes:
-                self._setup_date_axis(ax)
-
-    def _setup_date_axis(self, ax: Axes) -> None:
-        """
-        Put the freq and the period converter on the x-axis.
-
-        Done here rather than in _post_plot_logic because _adorn_subplots()
-        runs in between and maps any user-supplied xticks through whatever
-        converter the axis carries: registering ours afterwards would both
-        misplace those ticks and replace matplotlib's date converter, which
-        warns.
-        """
-        # The freq is deliberately not set on the *axes* (nor is decorate_axes()
-        # called): that registers it as a resamplable time-series axes -- ax.freq
-        # plus an entry in ax._plot_data -- a protocol only line plots implement.
-        # A bar plot that joined it would be resampled by maybe_resample() when a
-        # line at another freq is added later, and since bar artists cannot be
-        # replayed by _replot_ax(), its ax.clear() would erase them.
-        xaxis = ax.get_xaxis()
-        if getattr(xaxis, "freq", None) is None:
-            # an axes decorated by an earlier plot already carries one; leaving
-            # it alone keeps date-valued calls resolving at the scale of the
-            # data already drawn there
-            # TODO #54485
-            xaxis.freq = self._ts_freq  # type: ignore[attr-defined]
-        set_period_converter(ax)
-
     def _post_plot_logic(self, ax: Axes, data) -> None:
+        if self.use_index:
+            str_index = [pprint_thing(key) for key in data.index]
+        else:
+            str_index = [pprint_thing(key) for key in range(data.shape[0])]
+
         s_edge = self.ax_pos[0] - 0.25 + self.lim_offset
         e_edge = self.ax_pos[-1] + 0.25 + self.bar_width + self.lim_offset
 
-        # GH#1918: use the same dynamic date tick labeling as line plots
-        if self._use_dynamic_dateaxis:
-            freq = self._ts_freq
-
-            # Convert DatetimeIndex to PeriodIndex (int64 business-day ordinals
-            # for BDay freq, avoiding deprecated Period[B]) to match the
-            # x-coordinates used in _make_plot.
-            data, _ = maybe_convert_index(ax, data)
-            # the limits below sit half a period outside the bars, so tell
-            # the locator which ordinal its grid has to land on
-            format_dateaxis(ax, freq, data.index, anchor=int(self.tick_pos[0]))
-
-            ax.set_xlim((s_edge, e_edge))
-            if self.xticks is not None:
-                ax.set_xticks(np.array(self.xticks))
-            # otherwise leave tick placement to the dynamic locator installed
-            # by format_dateaxis, exactly as line plots do; pinning a tick at
-            # every bar would suppress the intermediate minor-tick labels
-
-            # _post_plot_logic_common() applied rot and fontsize before the
-            # dynamic locators existed, so the minor ticks -- which carry most
-            # of the date labels -- had not been created yet to receive them
-            type(self)._apply_axis_properties(
-                ax.xaxis, rot=self.rot, fontsize=self.fontsize
-            )
-
-            index_name = self._get_index_name()
-            if index_name is not None and self.use_index:
-                ax.set_xlabel(index_name)
-        else:
-            if self.use_index:
-                str_index = [pprint_thing(key) for key in data.index]
-            else:
-                str_index = [pprint_thing(key) for key in range(data.shape[0])]
-
-            self._decorate_ticks(ax, self._get_index_name(), str_index, s_edge, e_edge)
+        self._decorate_ticks(ax, self._get_index_name(), str_index, s_edge, e_edge)
 
     def _decorate_ticks(
         self,
@@ -2350,9 +2080,10 @@ class PiePlot(MPLPlot):
 
     def __init__(self, data: Series | DataFrame, kind=None, **kwargs) -> None:
         data = data.fillna(value=0)
-        if isinstance(data, ABCDataFrame) and (data < 0).any().any():
+        lt_zero = data < 0
+        if isinstance(data, ABCDataFrame) and lt_zero.any().any():
             raise ValueError(f"{self._kind} plot doesn't allow negative values")
-        elif isinstance(data, ABCSeries) and (data < 0).any():
+        elif isinstance(data, ABCSeries) and lt_zero.any():
             raise ValueError(f"{self._kind} plot doesn't allow negative values")
         MPLPlot.__init__(self, data, kind=kind, **kwargs)
 
@@ -2360,8 +2091,8 @@ class PiePlot(MPLPlot):
     def _validate_log_kwd(
         cls,
         kwd: str,
-        value: bool | Literal["sym"] | None,
-    ) -> bool | Literal["sym"] | None:
+        value: bool | None | Literal["sym"],
+    ) -> bool | None | Literal["sym"]:
         super()._validate_log_kwd(kwd=kwd, value=value)
         if value is not False:
             warnings.warn(
@@ -2396,20 +2127,17 @@ class PiePlot(MPLPlot):
             # Blank out labels for values of 0 so they don't overlap
             # with nonzero wedges
             if labels is not None:
-                blabels = [
-                    blank_labeler(left, value)
-                    for left, value in zip(labels, y, strict=True)
-                ]
+                blabels = [blank_labeler(left, value) for left, value in zip(labels, y)]
             else:
                 blabels = None
-            # Any: pie returns a 2- or 3-tuple and matplotlib's return type
-            # for it differs across versions
-            results: Any = ax.pie(y, labels=blabels, **kwds)
+            results = ax.pie(y, labels=blabels, **kwds)
 
             if kwds.get("autopct", None) is not None:
-                patches, texts, autotexts = results
+                # error: Need more than 2 values to unpack (3 expected)
+                patches, texts, autotexts = results  # type: ignore[misc]
             else:
-                patches, texts = results
+                # error: Too many values to unpack (2 expected, 3 provided)
+                patches, texts = results  # type: ignore[misc]
                 autotexts = []
 
             if self.fontsize is not None:
@@ -2418,7 +2146,7 @@ class PiePlot(MPLPlot):
 
             # leglabels is used for legend labels
             leglabels = labels if labels is not None else idx
-            for _patch, _leglabel in zip(patches, leglabels, strict=True):
+            for _patch, _leglabel in zip(patches, leglabels):
                 self._append_legend_handles_labels(_patch, _leglabel)
 
     def _post_plot_logic(self, ax: Axes, data) -> None:

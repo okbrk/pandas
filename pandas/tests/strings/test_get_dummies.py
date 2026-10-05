@@ -1,30 +1,42 @@
 import numpy as np
 import pytest
 
+from pandas._config import using_string_dtype
+
 import pandas.util._test_decorators as td
 
-import pandas as pd
-import pandas._testing as tm
+from pandas import (
+    DataFrame,
+    Index,
+    MultiIndex,
+    Series,
+    _testing as tm,
+)
+
+try:
+    import pyarrow as pa
+except ImportError:
+    pa = None
 
 
 def test_get_dummies(any_string_dtype):
-    s = pd.Series(["a|b", "a|c", np.nan], dtype=any_string_dtype)
+    s = Series(["a|b", "a|c", np.nan], dtype=any_string_dtype)
     result = s.str.get_dummies("|")
-    expected = pd.DataFrame([[1, 1, 0], [1, 0, 1], [0, 0, 0]], columns=list("abc"))
+    expected = DataFrame([[1, 1, 0], [1, 0, 1], [0, 0, 0]], columns=list("abc"))
     tm.assert_frame_equal(result, expected)
 
-    s = pd.Series(["a;b", "a", 7], dtype=any_string_dtype)
+    s = Series(["a;b", "a", 7], dtype=any_string_dtype)
     result = s.str.get_dummies(";")
-    expected = pd.DataFrame([[0, 1, 1], [0, 1, 0], [1, 0, 0]], columns=list("7ab"))
+    expected = DataFrame([[0, 1, 1], [0, 1, 0], [1, 0, 0]], columns=list("7ab"))
     tm.assert_frame_equal(result, expected)
 
 
 def test_get_dummies_index():
     # GH9980, GH8028
-    idx = pd.Index(["a|b", "a|c", "b|c"])
+    idx = Index(["a|b", "a|c", "b|c"])
     result = idx.str.get_dummies("|")
 
-    expected = pd.MultiIndex.from_tuples(
+    expected = MultiIndex.from_tuples(
         [(1, 1, 0), (1, 0, 1), (0, 1, 1)], names=("a", "b", "c")
     )
     tm.assert_index_equal(result, expected)
@@ -50,9 +62,9 @@ def test_get_dummies_index():
     ],
 )
 def test_get_dummies_with_dtype(any_string_dtype, dtype):
-    s = pd.Series(["a|b", "a|c", np.nan], dtype=any_string_dtype)
+    s = Series(["a|b", "a|c", np.nan], dtype=any_string_dtype)
     result = s.str.get_dummies("|", dtype=dtype)
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [[1, 1, 0], [1, 0, 1], [0, 0, 0]], columns=list("abc"), dtype=dtype
     )
     tm.assert_frame_equal(result, expected)
@@ -75,9 +87,9 @@ def test_get_dummies_with_dtype(any_string_dtype, dtype):
     ],
 )
 def test_get_dummies_with_pyarrow_dtype(any_string_dtype, dtype):
-    s = pd.Series(["a|b", "a|c", np.nan], dtype=any_string_dtype)
+    s = Series(["a|b", "a|c", np.nan], dtype=any_string_dtype)
     result = s.str.get_dummies("|", dtype=dtype)
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [[1, 1, 0], [1, 0, 1], [0, 0, 0]],
         columns=list("abc"),
         dtype=dtype,
@@ -86,12 +98,30 @@ def test_get_dummies_with_pyarrow_dtype(any_string_dtype, dtype):
 
 
 # GH#47872
+@pytest.mark.xfail(using_string_dtype(), reason="TODO(infer_string)")
 def test_get_dummies_with_str_dtype(any_string_dtype):
-    s = pd.Series(["a|b", "a|c", np.nan], dtype=any_string_dtype)
+    s = Series(["a|b", "a|c", np.nan], dtype=any_string_dtype)
+    result = s.str.get_dummies("|", dtype=str)
+    expected = DataFrame(
+        [["T", "T", "F"], ["T", "F", "T"], ["F", "F", "F"]],
+        columns=list("abc"),
+        dtype=str,
+    )
+    tm.assert_frame_equal(result, expected)
 
-    msg = "Only numeric or boolean dtypes are supported for 'dtype'"
-    with pytest.raises(ValueError, match=msg):
-        s.str.get_dummies("|", dtype=str)
 
-    with pytest.raises(ValueError, match=msg):
-        s.str.get_dummies("|", dtype="datetime64[ns]")
+# GH#47872
+@td.skip_if_no("pyarrow")
+def test_get_dummies_with_pa_str_dtype(any_string_dtype):
+    s = Series(["a|b", "a|c", np.nan], dtype=any_string_dtype)
+    result = s.str.get_dummies("|", dtype="str[pyarrow]")
+    expected = DataFrame(
+        [
+            ["true", "true", "false"],
+            ["true", "false", "true"],
+            ["false", "false", "false"],
+        ],
+        columns=list("abc"),
+        dtype="str[pyarrow]",
+    )
+    tm.assert_frame_equal(result, expected)

@@ -2,7 +2,12 @@ import numpy as np
 
 from pandas._libs import index as libindex
 
-import pandas as pd
+from pandas import (
+    DataFrame,
+    MultiIndex,
+    RangeIndex,
+    Series,
+)
 import pandas._testing as tm
 
 
@@ -20,8 +25,8 @@ def test_detect_chained_assignment():
         ("ears", "left"): c,
         ("ears", "right"): d,
     }
-    multiind = pd.MultiIndex.from_tuples(tuples, names=["part", "side"])
-    zed = pd.DataFrame(events, index=["a", "b"], columns=multiind)
+    multiind = MultiIndex.from_tuples(tuples, names=["part", "side"])
+    zed = DataFrame(events, index=["a", "b"], columns=multiind)
 
     with tm.raises_chained_assignment_error():
         zed["eyes"]["right"].fillna(value=555, inplace=True)
@@ -31,10 +36,10 @@ def test_cache_updating():
     # 5216
     # make sure that we don't try to set a dead cache
     a = np.random.default_rng(2).random((10, 3))
-    df = pd.DataFrame(a, columns=["x", "y", "z"])
+    df = DataFrame(a, columns=["x", "y", "z"])
     df_original = df.copy()
     tuples = [(i, j) for i in range(5) for j in range(2)]
-    index = pd.MultiIndex.from_tuples(tuples)
+    index = MultiIndex.from_tuples(tuples)
     df.index = index
 
     # setting via chained assignment
@@ -57,19 +62,17 @@ def test_indexer_caching(monkeypatch):
     size_cutoff = 20
     with monkeypatch.context():
         monkeypatch.setattr(libindex, "_SIZE_CUTOFF", size_cutoff)
-        index = pd.MultiIndex.from_arrays(
-            [np.arange(size_cutoff), np.arange(size_cutoff)]
-        )
-        s = pd.Series(np.zeros(size_cutoff), index=index)
+        index = MultiIndex.from_arrays([np.arange(size_cutoff), np.arange(size_cutoff)])
+        s = Series(np.zeros(size_cutoff), index=index)
 
         # setitem
         s[s == 0] = 1
-    expected = pd.Series(np.ones(size_cutoff), index=index)
+    expected = Series(np.ones(size_cutoff), index=index)
     tm.assert_series_equal(s, expected)
 
 
 def test_set_names_only_clears_level_cache():
-    mi = pd.MultiIndex.from_arrays([range(4), range(4)], names=["a", "b"])
+    mi = MultiIndex.from_arrays([range(4), range(4)], names=["a", "b"])
     mi.dtypes
     mi.is_monotonic_increasing
     mi._engine
@@ -80,5 +83,5 @@ def test_set_names_only_clears_level_cache():
     new_cache_keys = sorted(mi._cache.keys())
     assert new_cache_keys == ["_engine", "dtypes", "is_monotonic_increasing"]
     new_levels = mi.levels
-    tm.assert_index_equal(new_levels[0], pd.RangeIndex(4, name="A"))
-    tm.assert_index_equal(new_levels[1], pd.RangeIndex(4, name="B"))
+    tm.assert_index_equal(new_levels[0], RangeIndex(4, name="A"))
+    tm.assert_index_equal(new_levels[1], RangeIndex(4, name="B"))

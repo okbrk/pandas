@@ -4,6 +4,12 @@ import numpy as np
 import pytest
 
 import pandas as pd
+from pandas import (
+    DataFrame,
+    Series,
+    Timestamp,
+    date_range,
+)
 import pandas._testing as tm
 
 from pandas.tseries.offsets import BDay
@@ -22,16 +28,16 @@ def test_map(float_frame):
 @pytest.mark.parametrize("val", [1, 1.0])
 def test_map_float_object_conversion(val):
     # GH 2909: object conversion to float in constructor?
-    df = pd.DataFrame(data=[val, "a"])
+    df = DataFrame(data=[val, "a"])
     result = df.map(lambda x: x).dtypes[0]
     assert result == object
 
 
 def test_map_keeps_dtype(na_action):
     # GH52219
-    arr = pd.Series(["a", np.nan, "b"])
+    arr = Series(["a", np.nan, "b"])
     sparse_arr = arr.astype(pd.SparseDtype(object))
-    df = pd.DataFrame(data={"a": arr, "b": sparse_arr})
+    df = DataFrame(data={"a": arr, "b": sparse_arr})
 
     def func(x):
         return str.upper(x) if not pd.isna(x) else x
@@ -40,7 +46,7 @@ def test_map_keeps_dtype(na_action):
 
     expected_sparse = pd.array(["A", np.nan, "B"], dtype=pd.SparseDtype(object))
     expected_arr = expected_sparse.astype(object)
-    expected = pd.DataFrame({"a": expected_arr, "b": expected_sparse})
+    expected = DataFrame({"a": expected_arr, "b": expected_sparse})
 
     tm.assert_frame_equal(result, expected)
 
@@ -51,7 +57,7 @@ def test_map_keeps_dtype(na_action):
 
 def test_map_str():
     # GH 2786
-    df = pd.DataFrame(np.random.default_rng(2).random((3, 4)))
+    df = DataFrame(np.random.default_rng(2).random((3, 4)))
     df2 = df.copy()
     cols = ["a", "a", "a", "a"]
     df.columns = cols
@@ -64,11 +70,11 @@ def test_map_str():
 
 @pytest.mark.parametrize(
     "col, val",
-    [["datetime", pd.Timestamp("20130101")], ["timedelta", pd.Timedelta("1 min")]],
+    [["datetime", Timestamp("20130101")], ["timedelta", pd.Timedelta("1 min")]],
 )
 def test_map_datetimelike(col, val):
     # datetime/timedelta
-    df = pd.DataFrame(np.random.default_rng(2).random((3, 4)))
+    df = DataFrame(np.random.default_rng(2).random((3, 4)))
     df[col] = val
     result = df.map(str)
     assert result.loc[0, col] == str(df.loc[0, col])
@@ -77,10 +83,10 @@ def test_map_datetimelike(col, val):
 @pytest.mark.parametrize(
     "expected",
     [
-        pd.DataFrame(),
-        pd.DataFrame(columns=list("ABC")),
-        pd.DataFrame(index=list("ABC")),
-        pd.DataFrame({"A": [], "B": [], "C": []}),
+        DataFrame(),
+        DataFrame(columns=list("ABC")),
+        DataFrame(index=list("ABC")),
+        DataFrame({"A": [], "B": [], "C": []}),
     ],
 )
 @pytest.mark.parametrize("func", [round, lambda x: x])
@@ -92,8 +98,8 @@ def test_map_empty(expected, func):
 
 def test_map_kwargs():
     # GH 40652
-    result = pd.DataFrame([[1, 2], [3, 4]]).map(lambda x, y: x + y, y=2)
-    expected = pd.DataFrame([[3, 4], [5, 6]])
+    result = DataFrame([[1, 2], [3, 4]]).map(lambda x, y: x + y, y=2)
+    expected = DataFrame([[3, 4], [5, 6]])
     tm.assert_frame_equal(result, expected)
 
 
@@ -114,23 +120,23 @@ def test_map_na_ignore(float_frame):
 
 def test_map_box_timestamps():
     # GH 2689, GH 2627
-    ser = pd.Series(pd.date_range("1/1/2000", periods=10))
+    ser = Series(date_range("1/1/2000", periods=10))
 
     def func(x):
         return (x.hour, x.day, x.month)
 
     # it works!
-    pd.DataFrame(ser).map(func)
+    DataFrame(ser).map(func)
 
 
 def test_map_box():
     # ufunc will not be boxed. Same test cases as the test_map_box
-    df = pd.DataFrame(
+    df = DataFrame(
         {
-            "a": [pd.Timestamp("2011-01-01"), pd.Timestamp("2011-01-02")],
+            "a": [Timestamp("2011-01-01"), Timestamp("2011-01-02")],
             "b": [
-                pd.Timestamp("2011-01-01", tz="US/Eastern"),
-                pd.Timestamp("2011-01-02", tz="US/Eastern"),
+                Timestamp("2011-01-01", tz="US/Eastern"),
+                Timestamp("2011-01-02", tz="US/Eastern"),
             ],
             "c": [pd.Timedelta("1 days"), pd.Timedelta("2 days")],
             "d": [
@@ -141,7 +147,7 @@ def test_map_box():
     )
 
     result = df.map(lambda x: type(x).__name__)
-    expected = pd.DataFrame(
+    expected = DataFrame(
         {
             "a": ["Timestamp", "Timestamp"],
             "b": ["Timestamp", "Timestamp"],
@@ -154,7 +160,7 @@ def test_map_box():
 
 def test_frame_map_dont_convert_datetime64(unit):
     dtype = f"M8[{unit}]"
-    df = pd.DataFrame({"x1": [datetime(1996, 1, 1)]}, dtype=dtype)
+    df = DataFrame({"x1": [datetime(1996, 1, 1)]}, dtype=dtype)
 
     df = df.map(lambda x: x + BDay())
     df = df.map(lambda x: x + BDay())
@@ -164,7 +170,7 @@ def test_frame_map_dont_convert_datetime64(unit):
 
 
 def test_map_function_runs_once():
-    df = pd.DataFrame({"a": [1, 2, 3]})
+    df = DataFrame({"a": [1, 2, 3]})
     values = []  # Save values function is applied to
 
     def reducing_function(val):
@@ -183,13 +189,13 @@ def test_map_function_runs_once():
 
 def test_map_type():
     # GH 46719
-    df = pd.DataFrame(
+    df = DataFrame(
         {"col1": [3, "string", float], "col2": [0.25, datetime(2020, 1, 1), np.nan]},
         index=["a", "b", "c"],
     )
 
     result = df.map(type)
-    expected = pd.DataFrame(
+    expected = DataFrame(
         {"col1": [int, str, type], "col2": [float, datetime, float]},
         index=["a", "b", "c"],
     )

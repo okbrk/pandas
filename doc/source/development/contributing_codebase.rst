@@ -18,8 +18,14 @@ tools will be run to check your code for stylistic errors.
 Generating any warnings will cause the test to fail.
 Thus, good style is a requirement for submitting code to pandas.
 
-``pre-commit``, which we go into detail on in the next section, helps contributors verify their changes
+There are a couple of tools in pandas to help contributors verify their changes
 before contributing to the project
+
+- ``./ci/code_checks.sh``: a script validates the doctests, formatting in docstrings,
+  and imported modules. It is possible to run the checks independently by using the
+  parameters ``docstrings``, ``code``, and ``doctests``
+  (e.g. ``./ci/code_checks.sh doctests``);
+- ``pre-commit``, which we go into detail on in the next section.
 
 In addition, because a lot of people use our library, it is important that we
 do not make sudden changes to the code that could have the potential to break
@@ -192,7 +198,7 @@ In some cases you may be tempted to use ``cast`` from the typing module when you
            obj = cast(str, obj)  # Mypy complains without this!
            return obj.upper()
 
-The limitation here is that while a human can reasonably understand that ``is_number`` would catch the ``int`` and ``float`` types mypy cannot make that same inference just yet (see `mypy #5206 <https://github.com/python/mypy/issues/5206>`_). While the above works, the use of ``cast`` is **strongly discouraged**. Where applicable a refactor of the code to appease static analysis is preferable
+The limitation here is that while a human can reasonably understand that ``is_number`` would catch the ``int`` and ``float`` types mypy cannot make that same inference just yet (see `mypy #5206 <https://github.com/python/mypy/issues/5206>`_. While the above works, the use of ``cast`` is **strongly discouraged**. Where applicable a refactor of the code to appease static analysis is preferable
 
 .. code-block:: python
 
@@ -208,8 +214,7 @@ With custom types and inference this is not always possible so exceptions are ma
 pandas-specific types
 ~~~~~~~~~~~~~~~~~~~~~
 
-Commonly used types specific to pandas will appear in `pandas._typing <https://github.com/pandas-dev/pandas/blob/main/pandas/_typing.py>`__ and you should use these where applicable. This module is private and is meant for pandas development.
-Types that are meant for user consumption should be exposed in `pandas.api.typing.aliases <https://github.com/pandas-dev/pandas/blob/main/pandas/api/typing/aliases.py>`__ and ideally added to the `pandas-stubs <https://github.com/pandas-dev/pandas-stubs>`__ project.
+Commonly used types specific to pandas will appear in `pandas._typing <https://github.com/pandas-dev/pandas/blob/main/pandas/_typing.py>`_ and you should use these where applicable. This module is private for now but ultimately this should be exposed to third party libraries who want to implement type checking against pandas.
 
 For example, quite a few functions in pandas accept a ``dtype`` argument. This can be expressed as a string like ``"object"``, a ``numpy.dtype`` like ``np.int64`` or even a pandas ``ExtensionDtype`` like ``pd.CategoricalDtype``. Rather than burden the user with having to constantly annotate all of those options, this can simply be imported and reused from the pandas._typing module
 
@@ -339,7 +344,7 @@ be located.
    - tests.scalar
    - tests.tseries.offsets
 
-2. Does your test depend only on code in ``pd._libs``?
+2. Does your test depend only on code in pd._libs?
    This test likely belongs in one of:
 
    - tests.libs
@@ -439,11 +444,11 @@ be located.
                result = ser.loc[[3, 4]]
                tm.assert_series_equal(result, expected)
 
-      In cases like this, the test location should be based on the *underlying*
-      method being tested.  Or in the case of a test for a bugfix, the location
-      of the actual bug.  So in this example, we know that ``Series.__getitem__``
-      calls ``Series.loc.__getitem__``, so this is *really* a test for
-      ``loc.__getitem__``.  So this test belongs in ``tests.indexing.test_loc``.
+    In cases like this, the test location should be based on the *underlying*
+    method being tested.  Or in the case of a test for a bugfix, the location
+    of the actual bug.  So in this example, we know that ``Series.__getitem__``
+    calls ``Series.loc.__getitem__``, so this is *really* a test for
+    ``loc.__getitem__``.  So this test belongs in ``tests.indexing.test_loc``.
 
 6. Is your test for a DataFrame or Series method?
 
@@ -492,26 +497,6 @@ be located.
 
    - tests.extension
 
-.. _contributing.test_imports:
-
-Imports in tests
-~~~~~~~~~~~~~~~~
-
-Objects in the top-level pandas namespace are reached through ``pd`` rather than
-imported directly:
-
-.. code-block:: python
-
-   import pandas as pd
-
-   ser = pd.Series([1, 2, 3])
-
-Everything else is imported from the module which defines it, e.g.
-``import pandas._testing as tm`` or
-``from pandas.core.dtypes.common import is_integer_dtype``.  The ``test-imports``
-pre-commit hook checks that test files do not import from the ``pandas``
-namespace directly.
-
 Using ``pytest``
 ~~~~~~~~~~~~~~~~
 
@@ -552,7 +537,7 @@ Preferred ``pytest`` idioms
     test and does not check if the test will fail. If this is the behavior you desire, use ``pytest.skip`` instead.
 
 If a test is known to fail but the manner in which it fails
-is not meant to be captured, use ``pytest.mark.xfail``. It is common to use this method for a test that
+is not meant to be captured, use ``pytest.mark.xfail`` It is common to use this method for a test that
 exhibits buggy behavior or a non-implemented feature. If
 the failing test has flaky behavior, use the argument ``strict=False``. This
 will make it so pytest does not fail if the test happens to pass. Using ``strict=False`` is highly undesirable, please use it only as a last resort.
@@ -585,9 +570,6 @@ and specify the warning message using the ``match`` argument.
 
     with tm.assert_produces_warning(DeprecationWarning, match="the warning message"):
         pd.deprecated_function()
-
-Both arguments are required whenever a warning is expected. In the rare case where
-the message genuinely cannot be asserted, pass ``match=None`` to opt out.
 
 If a warning should specifically not happen in a block of code, pass ``False`` into the context manager.
 
@@ -727,6 +709,46 @@ Tests that we have ``parametrized`` are now accessible via the test name, for ex
    test_cool_feature.py::test_series[int8] PASSED
 
 
+.. _using-hypothesis:
+
+Using ``hypothesis``
+~~~~~~~~~~~~~~~~~~~~
+
+Hypothesis is a library for property-based testing. Instead of explicitly
+parametrizing a test, you can describe *all* valid inputs and let Hypothesis
+try to find a failing input.  Even better, no matter how many random examples
+it tries, Hypothesis always reports a single minimal counterexample to your
+assertions - often an example that you would never have thought to test.
+
+See `Getting Started with Hypothesis <https://hypothesis.works/articles/getting-started-with-hypothesis/>`_
+for more of an introduction, then `refer to the Hypothesis documentation
+for details <https://hypothesis.readthedocs.io/en/latest/index.html>`_.
+
+.. code-block:: python
+
+    import json
+    from hypothesis import given, strategies as st
+
+    any_json_value = st.deferred(lambda: st.one_of(
+        st.none(), st.booleans(), st.floats(allow_nan=False), st.text(),
+        st.lists(any_json_value), st.dictionaries(st.text(), any_json_value)
+    ))
+
+
+    @given(value=any_json_value)
+    def test_json_roundtrip(value):
+        result = json.loads(json.dumps(value))
+        assert value == result
+
+This test shows off several useful features of Hypothesis, as well as
+demonstrating a good use-case: checking properties that should hold over
+a large or complicated domain of inputs.
+
+To keep the pandas test suite running quickly, parametrized tests are
+preferred if the inputs or logic are simple, with Hypothesis tests reserved
+for cases with complex logic or where there are too many combinations of
+options or subtle interactions to test (or think of!) all of them.
+
 .. _contributing.running_tests:
 
 Running the test suite
@@ -784,24 +806,15 @@ speed by skipping some tests using the ``-m`` mark flag:
 
 - slow: any test taking long (think seconds rather than milliseconds)
 - network: tests requiring network connectivity
-- db: tests requiring a database (mysql or postgres); these skip themselves if
-  no database is running, so ``-m "not db"`` is only needed to avoid the cost
-  of checking for one
+- db: tests requiring a database (mysql or postgres)
 - single_cpu: tests that should run on a single cpu only
-
-Tests marked ``high_memory`` need >5GB of memory, so they are skipped unless you
-ask for them:
-
-.. code-block:: bash
-
-    pytest pandas/tests/io/test_parquet.py --run-high-memory
 
 You might want to enable the following option if it's relevant for you:
 
 - arm_slow: any test taking long on arm64 architecture
 
-These markers are defined `in pandas/conftest.py <https://github.com/pandas-dev/pandas/blob/main/pandas/conftest.py>`_
-, in a list called ``PANDAS_MARKERS``, in case
+These markers are defined `in this toml file <https://github.com/pandas-dev/pandas/blob/main/pyproject.toml>`_
+, under ``[tool.pytest.ini_options]`` in a list called ``markers``, in case
 you want to check if new ones have been created which are of interest to you.
 
 The ``-r`` report flag will display a short summary info (see `pytest
@@ -893,7 +906,8 @@ will only run the ``GroupByMethods`` benchmark defined in ``groupby.py``.
 
 You can also run the benchmark suite using the version of ``pandas``
 already installed in your current Python environment. This can be
-useful if you do not have virtualenv or conda; for the in-place build
+useful if you do not have virtualenv or conda, or are using the
+``setup.py develop`` approach discussed above; for the in-place build
 you need to set ``PYTHONPATH``, e.g.
 ``PYTHONPATH="$PWD/.." asv [remaining arguments]``.
 You can run benchmarks using an existing Python

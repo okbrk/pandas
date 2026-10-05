@@ -195,22 +195,18 @@ Create a pandas Series based on one or more conditions
 
 The :meth:`Series.case_when` function has been added to create a Series object based on one or more conditions. (:issue:`39154`)
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> import pandas as pd
+   import pandas as pd
 
-   >>> df = pd.DataFrame(dict(a=[1, 2, 3], b=[4, 5, 6]))
-   >>> default=pd.Series('default', index=df.index)
-   >>> default.case_when(
-   ...      caselist=[
-   ...          (df.a == 1, 'first'),                              # condition, replacement
-   ...          (df.a.gt(1) & df.b.eq(5), 'second'),  # condition, replacement
-   ...      ],
-   ... )
-   0      first
-   1     second
-   2    default
-   dtype: object
+   df = pd.DataFrame(dict(a=[1, 2, 3], b=[4, 5, 6]))
+   default=pd.Series('default', index=df.index)
+   default.case_when(
+        caselist=[
+            (df.a == 1, 'first'),                              # condition, replacement
+            (df.a.gt(1) & df.b.eq(5), 'second'),  # condition, replacement
+        ],
+   )
 
 .. _whatsnew_220.enhancements.to_numpy_ea:
 
@@ -230,16 +226,13 @@ suitable NumPy dtype instead of ``object`` dtype for nullable and PyArrow backed
 
 *New behavior:*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> ser = pd.Series([1, 2, 3], dtype="Int64")
-   >>> ser.to_numpy()
-   array([1, 2, 3])
+    ser = pd.Series([1, 2, 3], dtype="Int64")
+    ser.to_numpy()
 
-   >>> ser = pd.Series([1, 2, 3], dtype="timestamp[ns][pyarrow]")
-   >>> ser.to_numpy()
-   array(['1970-01-01T00:00:00.000000001', '1970-01-01T00:00:00.000000002',
-          '1970-01-01T00:00:00.000000003'], dtype='datetime64[ns]')
+    ser = pd.Series([1, 2, 3], dtype="timestamp[ns][pyarrow]")
+    ser.to_numpy()
 
 The default NumPy dtype (without any arguments) is determined as follows:
 
@@ -260,39 +253,31 @@ data with ``struct[pyarrow]`` dtype Series. For example,
 :meth:`Series.struct.explode` converts PyArrow structured data to a pandas
 DataFrame. (:issue:`54938`)
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> import pyarrow as pa
-   >>> series = pd.Series(
-   ...     [
-   ...         {"project": "pandas", "version": "2.2.0"},
-   ...         {"project": "numpy", "version": "1.25.2"},
-   ...         {"project": "pyarrow", "version": "13.0.0"},
-   ...     ],
-   ...     dtype=pd.ArrowDtype(
-   ...         pa.struct([
-   ...             ("project", pa.string()),
-   ...             ("version", pa.string()),
-   ...         ])
-   ...     ),
-   ... )
-   >>> series.struct.explode()
-      project version
-   0   pandas   2.2.0
-   1    numpy  1.25.2
-   2  pyarrow  13.0.0
+    import pyarrow as pa
+    series = pd.Series(
+        [
+            {"project": "pandas", "version": "2.2.0"},
+            {"project": "numpy", "version": "1.25.2"},
+            {"project": "pyarrow", "version": "13.0.0"},
+        ],
+        dtype=pd.ArrowDtype(
+            pa.struct([
+                ("project", pa.string()),
+                ("version", pa.string()),
+            ])
+        ),
+    )
+    series.struct.explode()
 
 Use :meth:`Series.struct.field` to index into a (possible nested)
 struct field.
 
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> series.struct.field("project")
-   0     pandas
-   1      numpy
-   2    pyarrow
-   Name: project, dtype: string[pyarrow]
+    series.struct.field("project")
 
 .. _whatsnew_220.enhancements.list_accessor:
 
@@ -304,24 +289,20 @@ data with ``list[pyarrow]`` dtype Series. For example,
 :meth:`Series.list.__getitem__` allows indexing pyarrow lists in
 a Series. (:issue:`55323`)
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> import pyarrow as pa
-   >>> series = pd.Series(
-   ...     [
-   ...         [1, 2, 3],
-   ...         [4, 5],
-   ...         [6],
-   ...     ],
-   ...     dtype=pd.ArrowDtype(
-   ...         pa.list_(pa.int64())
-   ...     ),
-   ... )
-   >>> series.list[0]
-   0    1
-   1    4
-   2    6
-   dtype: int64[pyarrow]
+    import pyarrow as pa
+    series = pd.Series(
+        [
+            [1, 2, 3],
+            [4, 5],
+            [6],
+        ],
+        dtype=pd.ArrowDtype(
+            pa.list_(pa.int64())
+        ),
+    )
+    series.list[0]
 
 .. _whatsnew_220.enhancements.calamine:
 
@@ -399,11 +380,11 @@ join type (``how`` keyword):
 One example with changing behavior is inner joins with non-unique left join keys
 and ``sort=False``:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> left = pd.DataFrame({"a": [1, 2, 1]})
-   >>> right = pd.DataFrame({"a": [1, 2]})
-   >>> result = pd.merge(left, right, how="inner", on="a", sort=False)
+    left = pd.DataFrame({"a": [1, 2, 1]})
+    right = pd.DataFrame({"a": [1, 2]})
+    result = pd.merge(left, right, how="inner", on="a", sort=False)
 
 *Old Behavior*
 
@@ -418,13 +399,9 @@ and ``sort=False``:
 
 *New Behavior*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> result
-      a
-   0  1
-   1  2
-   2  1
+    result
 
 .. _whatsnew_220.notable_bug_fixes.multiindex_join_different_levels:
 
@@ -434,21 +411,13 @@ and ``sort=False``:
 In previous versions of pandas, :func:`merge` and :meth:`DataFrame.join` would reorder
 index levels when joining on two indexes with different levels (:issue:`34133`).
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> left = pd.DataFrame({"left": 1}, index=pd.MultiIndex.from_tuples([("x", 1), ("x", 2)], names=["A", "B"]))
-   >>> right = pd.DataFrame({"right": 2}, index=pd.MultiIndex.from_tuples([(1, 1), (2, 2)], names=["B", "C"]))
-   >>> left
-        left
-   A B
-   x 1     1
-     2     1
-   >>> right
-        right
-   B C
-   1 1      2
-   2 2      2
-   >>> result = left.join(right)
+    left = pd.DataFrame({"left": 1}, index=pd.MultiIndex.from_tuples([("x", 1), ("x", 2)], names=["A", "B"]))
+    right = pd.DataFrame({"right": 2}, index=pd.MultiIndex.from_tuples([(1, 1), (2, 2)], names=["B", "C"]))
+    left
+    right
+    result = left.join(right)
 
 *Old Behavior*
 
@@ -463,13 +432,9 @@ index levels when joining on two indexes with different levels (:issue:`34133`).
 
 *New Behavior*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> result
-          left  right
-   A B C
-   x 1 1     1      2
-     2 2     1      2
+    result
 
 .. _whatsnew_220.api_breaking.deps:
 
@@ -650,10 +615,9 @@ For example:
 
 *Future behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.date_range('2020-01-01', periods=3, freq='QE-NOV')
-   DatetimeIndex(['2020-02-29', '2020-05-31', '2020-08-31'], dtype='datetime64[ns]', freq='QE-NOV')
+    pd.date_range('2020-01-01', periods=3, freq='QE-NOV')
 
 .. _whatsnew_220.silent_downcasting:
 
@@ -700,7 +664,7 @@ Other Deprecations
 - Deprecated :meth:`DatetimeArray.__init__` and :meth:`TimedeltaArray.__init__`, use :func:`array` instead (:issue:`55623`)
 - Deprecated :meth:`Index.format`, use ``index.astype(str)`` or ``index.map(formatter)`` instead (:issue:`55413`)
 - Deprecated :meth:`Series.ravel`, the underlying array is already 1D, so ravel is not necessary (:issue:`52511`)
-- Deprecated :meth:`Series.resample` and :meth:`DataFrame.resample` with a :class:`PeriodIndex` (and the 'convention' keyword), convert to :class:`DatetimeIndex` (with ``.to_timestamp()``) before resampling instead (:issue:`53481`). Note: this deprecation was later undone in pandas 2.3.3 (:issue:`57033`)
+- Deprecated :meth:`Series.resample` and :meth:`DataFrame.resample` with a :class:`PeriodIndex` (and the 'convention' keyword), convert to :class:`DatetimeIndex` (with ``.to_timestamp()``) before resampling instead (:issue:`53481`)
 - Deprecated :meth:`Series.view`, use :meth:`Series.astype` instead to change the dtype (:issue:`20251`)
 - Deprecated :meth:`offsets.Tick.is_anchored`, use ``False`` instead (:issue:`55388`)
 - Deprecated ``core.internals`` members ``Block``, ``ExtensionBlock``, and ``DatetimeTZBlock``, use public APIs instead (:issue:`55139`)
@@ -851,8 +815,8 @@ Conversion
 ^^^^^^^^^^
 - Bug in :meth:`DataFrame.astype` when called with ``str`` on unpickled array - the array might change in-place (:issue:`54654`)
 - Bug in :meth:`DataFrame.astype` where ``errors="ignore"`` had no effect for extension types (:issue:`54654`)
-- Bug in :meth:`DataFrame.loc` was not throwing "incompatible dtype warning" (see `PDEP6 <https://pandas.pydata.org/pdeps/0006-ban-upcasting.html>`_) when assigning a ``Series`` with a different dtype using a full column setter (e.g. ``df.loc[:, 'a'] = incompatible_value``) (:issue:`39584`)
 - Bug in :meth:`Series.convert_dtypes` not converting all NA column to ``null[pyarrow]`` (:issue:`55346`)
+- Bug in :meth:``DataFrame.loc`` was not throwing "incompatible dtype warning" (see `PDEP6 <https://pandas.pydata.org/pdeps/0006-ban-upcasting.html>`_) when assigning a ``Series`` with a different dtype using a full column setter (e.g. ``df.loc[:, 'a'] = incompatible_value``) (:issue:`39584`)
 
 Strings
 ^^^^^^^
@@ -862,7 +826,7 @@ Strings
 - Bug in :meth:`Index.str.cat` always casting result to object dtype (:issue:`56157`)
 - Bug in :meth:`Series.__mul__` for :class:`ArrowDtype` with ``pyarrow.string`` dtype and ``string[pyarrow]`` for the pyarrow backend (:issue:`51970`)
 - Bug in :meth:`Series.str.find` when ``start < 0`` for :class:`ArrowDtype` with ``pyarrow.string`` (:issue:`56411`)
-- Bug in :meth:`Series.str.fullmatch` when ``dtype=pandas.ArrowDtype(pyarrow.string())`` allows partial matches when regex ends in literal //$ (:issue:`56652`)
+- Bug in :meth:`Series.str.fullmatch` when ``dtype=pandas.ArrowDtype(pyarrow.string()))`` allows partial matches when regex ends in literal //$ (:issue:`56652`)
 - Bug in :meth:`Series.str.replace` when ``n < 0`` for :class:`ArrowDtype` with ``pyarrow.string`` (:issue:`56404`)
 - Bug in :meth:`Series.str.startswith` and :meth:`Series.str.endswith` with arguments of type ``tuple[str, ...]`` for :class:`ArrowDtype` with ``pyarrow.string`` dtype (:issue:`56579`)
 - Bug in :meth:`Series.str.startswith` and :meth:`Series.str.endswith` with arguments of type ``tuple[str, ...]`` for ``string[pyarrow]`` (:issue:`54942`)

@@ -15,11 +15,7 @@ import warnings
 import numpy as np
 
 from pandas._libs import lib
-from pandas._libs.tslibs import (
-    OutOfBoundsDatetime,
-    OutOfBoundsTimedelta,
-    iNaT,
-)
+from pandas._libs.tslibs.timedeltas import array_to_timedelta64
 from pandas.errors import IntCastingNaNError
 
 from pandas.core.dtypes.common import (
@@ -28,18 +24,13 @@ from pandas.core.dtypes.common import (
     pandas_dtype,
 )
 from pandas.core.dtypes.dtypes import (
-    CategoricalDtype,
-    DatetimeTZDtype,
     ExtensionDtype,
-    IntervalDtype,
     NumpyEADtype,
-    PeriodDtype,
 )
 
 if TYPE_CHECKING:
     from pandas._typing import (
         ArrayLike,
-        Dtype,
         DtypeObj,
         IgnoreRaise,
     )
@@ -79,9 +70,6 @@ def _astype_nansafe(
     ------
     ValueError
         The dtype was a datetime64/timedelta64 dtype, but it had no unit.
-    OutOfBoundsDatetime or OutOfBoundsTimedelta
-        The dtype was a datetime64/timedelta64 dtype and the float data fell
-        outside the int64 domain.
     """
 
     # dispatch on extension dtype if needed
@@ -94,8 +82,8 @@ def _astype_nansafe(
     if arr.dtype.kind in "mM":
         from pandas.core.construction import ensure_wrapped_if_datetimelike
 
-        wrapped = ensure_wrapped_if_datetimelike(arr)  # type: ignore[no-untyped-call]
-        res = wrapped.astype(dtype, copy=copy)
+        arr = ensure_wrapped_if_datetimelike(arr)
+        res = arr.astype(dtype, copy=copy)
         return np.asarray(res)
 
     if issubclass(dtype.type, str):
@@ -107,11 +95,11 @@ def _astype_nansafe(
         ).reshape(shape)
 
     elif np.issubdtype(arr.dtype, np.floating) and dtype.kind in "iu":
-        return astype_float_to_int_nansafe(arr, dtype, copy)
+        return _astype_float_to_int_nansafe(arr, dtype, copy)
 
     elif arr.dtype == object:
-        # let the datetimelike constructors do the element-wise conversion,
-        #  so a numeric object array is read in the dtype's unit
+        # if we have a datetime/timedelta array of objects
+        # then coerce to datetime64[ns] and use DatetimeArray.astype
 
         if lib.is_np_dtype(dtype, "M"):
             from pandas.core.arrays import DatetimeArray
@@ -120,20 +108,15 @@ def _astype_nansafe(
             return dta._ndarray
 
         elif lib.is_np_dtype(dtype, "m"):
-            from pandas.core.arrays import TimedeltaArray
+            from pandas.core.construction import ensure_wrapped_if_datetimelike
 
-            if arr.ndim == 2 and len(arr) > 1:
-                # whether the unit applies depends on the values, so a neighbouring
-                #  column in the same block must not change the answer
-                return np.stack(
-                    [
-                        TimedeltaArray._from_sequence(col, dtype=dtype)._ndarray
-                        for col in arr
-                    ]
-                )
+            # bc we know arr.dtype == object, this is equivalent to
+            #  `np.asarray(to_timedelta(arr))`, but using a lower-level API that
+            #  does not require a circular import.
+            tdvals = array_to_timedelta64(arr).view("m8[ns]")
 
-            tda = TimedeltaArray._from_sequence(arr, dtype=dtype)
-            return tda._ndarray
+            tda = ensure_wrapped_if_datetimelike(tdvals)
+            return tda.astype(dtype, copy=False)._ndarray
 
     if dtype.name in ("datetime64", "timedelta64"):
         msg = (
@@ -142,27 +125,22 @@ def _astype_nansafe(
         )
         raise ValueError(msg)
 
-    if np.issubdtype(arr.dtype, np.floating) and dtype.kind in "mM":
-        raise_if_float_outside_int64(arr, dtype)
-
-    if copy or object in (arr.dtype, dtype):
+    if copy or arr.dtype == object or dtype == object:
         # Explicit copy, or required since NumPy can't view from / to object.
         return arr.astype(dtype, copy=True)
 
     return arr.astype(dtype, copy=copy)
 
 
-def astype_float_to_int_nansafe(
+def _astype_float_to_int_nansafe(
     values: np.ndarray, dtype: np.dtype, copy: bool
 ) -> np.ndarray:
     """
-    astype with a check preventing converting NaN to a meaningless integer value.
+    astype with a check preventing converting NaN to an meaningless integer value.
     """
     if not np.isfinite(values).all():
         raise IntCastingNaNError(
-            "Cannot convert non-finite values (NA or inf) to integer. "
-            "Replace or remove non-finite values or cast to an integer type "
-            "that supports these values (e.g. 'Int64')"
+            "Cannot convert non-finite values (NA or inf) to integer"
         )
     if dtype.kind == "u":
         # GH#45151
@@ -171,38 +149,6 @@ def astype_float_to_int_nansafe(
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=RuntimeWarning)
         return values.astype(dtype, copy=copy)
-
-
-def float_outside_int64(values: np.ndarray) -> np.ndarray:
-    """
-    Mask of floats that a narrowing to int64 would alias to NaT or saturate.
-    """
-    # NaN compares False both ways. float(iNaT) is admitted and round-trips
-    #  to NaT, matching cast_from_unit_vectorized.
-    return (values >= np.float64(2**63)) | (values < np.float64(iNaT))
-
-
-def raise_if_float_outside_int64(
-    values: np.ndarray, dtype: np.dtype, mask: np.ndarray | None = None
-) -> None:
-    """
-    Reject floats that a cast to the given datetime64/timedelta64 dtype would
-    alias to NaT or saturate to an in-bounds-looking value.
-
-    Entries where ``mask`` is True are ignored.
-    """
-    unit, step = np.datetime_data(dtype)
-    if step != 1 or unit == "generic":
-        # unitless and multiplier dtypes are rejected regardless of the values
-        #  (multiplier: GH#25611), so the saturated value never surfaces
-        return
-    oob = float_outside_int64(values)
-    if mask is not None:
-        oob &= ~mask
-    if oob.any():
-        bad = values[oob][0]
-        err = OutOfBoundsDatetime if dtype.kind == "M" else OutOfBoundsTimedelta
-        raise err(f"cannot convert input {bad} with the unit '{unit}'")
 
 
 def astype_array(values: ArrayLike, dtype: DtypeObj, copy: bool = False) -> ArrayLike:
@@ -240,7 +186,7 @@ def astype_array(values: ArrayLike, dtype: DtypeObj, copy: bool = False) -> Arra
 
 
 def astype_array_safe(
-    values: ArrayLike, dtype: Dtype, copy: bool = False, errors: IgnoreRaise = "raise"
+    values: ArrayLike, dtype, copy: bool = False, errors: IgnoreRaise = "raise"
 ) -> ArrayLike:
     """
     Cast array (ndarray or ExtensionArray) to the new dtype.
@@ -321,23 +267,10 @@ def astype_is_view(dtype: DtypeObj, new_dtype: DtypeObj) -> bool:
         return True
 
     elif isinstance(dtype, np.dtype) and isinstance(new_dtype, np.dtype):
-        # GH#63936: pandas realizes a numpy str ("<U") target as an object
-        #  array via ensure_string_array, which views an object source.
-        if is_object_dtype(dtype) and is_string_dtype(new_dtype):
-            return True
         # Only equal numpy dtypes avoid a copy
         return False
 
     elif is_string_dtype(dtype) and is_string_dtype(new_dtype):
-        from pandas.core.arrays.string_ import StringDtype
-
-        if (
-            isinstance(dtype, StringDtype)
-            and dtype.storage == "pyarrow"
-            and new_dtype == "object"
-        ):
-            # for conversion of pyarrow array to numpy object array -> always a copy
-            return False
         # Potentially! a view when converting from object to string
         return True
 
@@ -349,16 +282,6 @@ def astype_is_view(dtype: DtypeObj, new_dtype: DtypeObj) -> bool:
         dtype = getattr(dtype, "numpy_dtype", dtype)
         new_dtype = getattr(new_dtype, "numpy_dtype", new_dtype)
         return getattr(dtype, "unit", None) == getattr(new_dtype, "unit", None)
-
-    elif new_dtype == object and isinstance(
-        dtype, (DatetimeTZDtype, PeriodDtype, IntervalDtype)
-    ):
-        return False
-
-    elif isinstance(dtype, CategoricalDtype) and not isinstance(
-        new_dtype, CategoricalDtype
-    ):
-        return False
 
     numpy_dtype = getattr(dtype, "numpy_dtype", None)
     new_numpy_dtype = getattr(new_dtype, "numpy_dtype", None)

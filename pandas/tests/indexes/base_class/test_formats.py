@@ -1,9 +1,10 @@
 import numpy as np
 import pytest
 
+from pandas._config import using_string_dtype
 import pandas._config.config as cf
 
-import pandas as pd
+from pandas import Index
 import pandas._testing as tm
 
 
@@ -11,22 +12,23 @@ class TestIndexRendering:
     def test_repr_is_valid_construction_code(self):
         # for the case of Index, where the repr is traditional rather than
         # stylized
-        idx = pd.Index(["a", "b"])
-        res = eval(repr(idx), dict(vars(pd)))
+        idx = Index(["a", "b"])
+        res = eval(repr(idx))
         tm.assert_index_equal(res, idx)
 
+    @pytest.mark.xfail(using_string_dtype(), reason="repr different")
     @pytest.mark.parametrize(
         "index,expected",
         [
             # ASCII
             # short
             (
-                pd.Index(["a", "bb", "ccc"]),
+                Index(["a", "bb", "ccc"]),
                 """Index(['a', 'bb', 'ccc'], dtype='object')""",
             ),
             # multiple lines
             (
-                pd.Index(["a", "bb", "ccc"] * 10),
+                Index(["a", "bb", "ccc"] * 10),
                 "Index(['a', 'bb', 'ccc', 'a', 'bb', 'ccc', 'a', "
                 "'bb', 'ccc', 'a', 'bb', 'ccc',\n"
                 "       'a', 'bb', 'ccc', 'a', 'bb', 'ccc', 'a', "
@@ -36,7 +38,7 @@ class TestIndexRendering:
             ),
             # truncated
             (
-                pd.Index(["a", "bb", "ccc"] * 100),
+                Index(["a", "bb", "ccc"] * 100),
                 "Index(['a', 'bb', 'ccc', 'a', 'bb', 'ccc', 'a', 'bb', 'ccc', 'a',\n"
                 "       ...\n"
                 "       'ccc', 'a', 'bb', 'ccc', 'a', 'bb', 'ccc', 'a', 'bb', 'ccc'],\n"
@@ -45,12 +47,12 @@ class TestIndexRendering:
             # Non-ASCII
             # short
             (
-                pd.Index(["あ", "いい", "ううう"]),
+                Index(["あ", "いい", "ううう"]),
                 """Index(['あ', 'いい', 'ううう'], dtype='object')""",
             ),
             # multiple lines
             (
-                pd.Index(["あ", "いい", "ううう"] * 10),
+                Index(["あ", "いい", "ううう"] * 10),
                 (
                     "Index(['あ', 'いい', 'ううう', 'あ', 'いい', 'ううう', "
                     "'あ', 'いい', 'ううう', 'あ', 'いい', 'ううう',\n"
@@ -63,7 +65,7 @@ class TestIndexRendering:
             ),
             # truncated
             (
-                pd.Index(["あ", "いい", "ううう"] * 100),
+                Index(["あ", "いい", "ううう"] * 100),
                 (
                     "Index(['あ', 'いい', 'ううう', 'あ', 'いい', 'ううう', "
                     "'あ', 'いい', 'ううう', 'あ',\n"
@@ -75,24 +77,22 @@ class TestIndexRendering:
             ),
         ],
     )
-    def test_string_index_repr(self, index, expected, using_infer_string):
+    def test_string_index_repr(self, index, expected):
         result = repr(index)
-        if using_infer_string:
-            expected = expected.replace("dtype='object'", "dtype='str'")
-
         assert result == expected
 
+    @pytest.mark.xfail(using_string_dtype(), reason="repr different")
     @pytest.mark.parametrize(
         "index,expected",
         [
             # short
             (
-                pd.Index(["あ", "いい", "ううう"]),
+                Index(["あ", "いい", "ううう"]),
                 ("Index(['あ', 'いい', 'ううう'], dtype='object')"),
             ),
             # multiple lines
             (
-                pd.Index(["あ", "いい", "ううう"] * 10),
+                Index(["あ", "いい", "ううう"] * 10),
                 (
                     "Index(['あ', 'いい', 'ううう', 'あ', 'いい', "
                     "'ううう', 'あ', 'いい', 'ううう',\n"
@@ -107,7 +107,7 @@ class TestIndexRendering:
             ),
             # truncated
             (
-                pd.Index(["あ", "いい", "ううう"] * 100),
+                Index(["あ", "いい", "ううう"] * 100),
                 (
                     "Index(['あ', 'いい', 'ううう', 'あ', 'いい', "
                     "'ううう', 'あ', 'いい', 'ううう',\n"
@@ -121,26 +121,21 @@ class TestIndexRendering:
             ),
         ],
     )
-    def test_string_index_repr_with_unicode_option(
-        self, index, expected, using_infer_string
-    ):
+    def test_string_index_repr_with_unicode_option(self, index, expected):
         # Enable Unicode option -----------------------------------------
         with cf.option_context("display.unicode.east_asian_width", True):
             result = repr(index)
-
-        if using_infer_string:
-            expected = expected.replace("dtype='object'", "dtype='str'")
-        assert result == expected
+            assert result == expected
 
     def test_repr_summary(self):
         with cf.option_context("display.max_seq_items", 10):
-            result = repr(pd.Index(np.arange(1000)))
+            result = repr(Index(np.arange(1000)))
             assert len(result) < 200
             assert "..." in result
 
     def test_summary_bug(self):
         # GH#3869
-        ind = pd.Index(["{other}%s", "~:{range}:0"], name="A")
+        ind = Index(["{other}%s", "~:{range}:0"], name="A")
         result = ind._summary()
         # shouldn't be formatted accidentally.
         assert "~:{range}:0" in result
@@ -148,23 +143,7 @@ class TestIndexRendering:
 
     def test_index_repr_bool_nan(self):
         # GH32146
-        arr = pd.Index([True, False, np.nan], dtype=object)
+        arr = Index([True, False, np.nan], dtype=object)
         exp2 = repr(arr)
-        out2 = "Index([True, False, NaN], dtype='object')"
+        out2 = "Index([True, False, nan], dtype='object')"
         assert out2 == exp2
-
-    @pytest.mark.parametrize("dtype", ["float32", "float64", object])
-    def test_index_repr_float_nan(self, dtype):
-        # GH#64733
-        idx = pd.Index([1.5, np.nan], dtype=dtype)
-        dtype_str = "object" if dtype is object else dtype
-        assert repr(idx) == f"Index([1.5, NaN], dtype='{dtype_str}')"
-        assert idx._summary() == "Index: 2 entries, 1.5 to NaN"
-
-    @pytest.mark.parametrize("dtype", ["complex64", "complex128"])
-    def test_index_repr_complex_nan(self, dtype):
-        # GH#64733
-        arr = np.array([1 + 2j, complex(np.nan, -1), complex(1, np.nan)], dtype=dtype)
-        result = repr(pd.Index(arr))
-        expected = f"Index([(1+2j), (NaN-1j), (1+NaNj)], dtype='{dtype}')"
-        assert result == expected

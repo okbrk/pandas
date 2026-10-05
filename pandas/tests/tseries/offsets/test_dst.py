@@ -30,7 +30,7 @@ from pandas._libs.tslibs.offsets import (
     YearEnd,
 )
 
-import pandas as pd
+from pandas import DatetimeIndex
 import pandas._testing as tm
 
 pytz = pytest.importorskip("pytz")
@@ -112,7 +112,7 @@ class TestDST:
                 tstart + offset
             # While we're here, let's check that we get the same behavior in a
             #  vectorized path
-            dti = pd.DatetimeIndex([tstart])
+            dti = DatetimeIndex([tstart])
             warn_msg = "Non-vectorized DateOffset"
             with pytest.raises(ValueError, match=err_msg):
                 with tm.assert_produces_warning(performance_warning, match=warn_msg):
@@ -128,7 +128,7 @@ class TestDST:
             assert t.date() == timedelta(days=7 * offset.kwds["weeks"]) + tstart.date()
             # expect the same day of week, hour of day, minute, second, ...
             assert (
-                t.day_of_week == tstart.day_of_week
+                t.dayofweek == tstart.dayofweek
                 and t.hour == tstart.hour
                 and t.minute == tstart.minute
                 and t.second == tstart.second
@@ -145,7 +145,7 @@ class TestDST:
         elif offset_name in self.valid_date_offsets_singular:
             # expect the singular offset value to match between tstart and t
             datepart_offset = getattr(
-                t, offset_name if offset_name != "weekday" else "day_of_week"
+                t, offset_name if offset_name != "weekday" else "dayofweek"
             )
             assert datepart_offset == offset.kwds[offset_name]
         else:
@@ -214,7 +214,7 @@ class TestDST:
         QuarterEnd: ["11/2/2012", "12/31/2012"],
         BQuarterBegin: ["11/2/2012", "12/3/2012"],
         BQuarterEnd: ["11/2/2012", "12/31/2012"],
-        Day: ["11/4/2012", "11/5/2012"],
+        Day: ["11/4/2012", "11/4/2012 23:00"],
     }.items()
 
     @pytest.mark.parametrize("tup", offset_classes)
@@ -263,13 +263,3 @@ def test_nontick_offset_with_ambiguous_time_error(original_dt, target_dt, offset
     msg = f"Cannot infer dst time from {target_dt}, try using the 'ambiguous' argument"
     with pytest.raises(ValueError, match=msg):
         localized_dt + offset
-
-
-def test_add_day_nonexistent_raises():
-    # https://github.com/pandas-dev/pandas/issues/41943#issuecomment-1466978225
-
-    ts = Timestamp("2015-03-28T2:30", tz="Europe/Warsaw")
-
-    msg = "is a nonexistent time due to daylight savings time"
-    with pytest.raises(ValueError, match=msg):
-        ts + Day(1)

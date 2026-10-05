@@ -28,8 +28,6 @@ from pandas._config.config import (
     is_text,
 )
 
-from pandas.errors import Pandas4Warning
-
 # compute
 
 use_bottleneck_doc = """
@@ -43,7 +41,7 @@ use_bottleneck_doc = """
 def use_bottleneck_cb(key: str) -> None:
     from pandas.core import nanops
 
-    nanops.set_use_bottleneck(cf._global_config["compute"]["use_bottleneck"])
+    nanops.set_use_bottleneck(cf.get_option(key))
 
 
 use_numexpr_doc = """
@@ -57,7 +55,7 @@ use_numexpr_doc = """
 def use_numexpr_cb(key: str) -> None:
     from pandas.core.computation import expressions
 
-    expressions.set_use_numexpr(cf._global_config["compute"]["use_numexpr"])
+    expressions.set_use_numexpr(cf.get_option(key))
 
 
 use_numba_doc = """
@@ -71,7 +69,7 @@ use_numba_doc = """
 def use_numba_cb(key: str) -> None:
     from pandas.core.util import numba_
 
-    numba_.set_use_numba(cf._global_config["compute"]["use_numba"])
+    numba_.set_use_numba(cf.get_option(key))
 
 
 with cf.config_prefix("compute"):
@@ -206,16 +204,8 @@ pc_show_dimensions_doc = """
 pc_east_asian_width_doc = """
 : boolean
     Whether to use the Unicode East Asian Width to calculate the display text
-    width, so that double-width characters such as CJK characters and most
-    emoji are aligned correctly.
-    Enabling this may affect performance (default: False)
-"""
-
-pc_ambiguous_as_wide_doc = """
-: boolean
-    Whether to treat characters whose Unicode East Asian Width is ambiguous
-    as double-width. Only used when ``display.unicode.east_asian_width`` is
-    True (default: False)
+    width.
+    Enabling this may affect to the performance (default: False)
 """
 
 
@@ -266,7 +256,7 @@ pc_chop_threshold_doc = """
 
 pc_max_seq_items = """
 : int or None
-    When pretty-printing a long sequence, no more than `max_seq_items`
+    When pretty-printing a long sequence, no more then `max_seq_items`
     will be printed. If items are omitted, they will be denoted by the
     addition of "..." to the resulting string.
 
@@ -298,7 +288,7 @@ pc_memory_usage_doc = """
 def table_schema_cb(key: str) -> None:
     from pandas.io.formats.printing import enable_data_resource_formatter
 
-    enable_data_resource_formatter(cf._global_config["display"]["html"]["table_schema"])
+    enable_data_resource_formatter(cf.get_option(key))
 
 
 def is_terminal() -> bool:
@@ -390,7 +380,7 @@ with cf.config_prefix("display"):
         "unicode.east_asian_width", False, pc_east_asian_width_doc, validator=is_bool
     )
     cf.register_option(
-        "unicode.ambiguous_as_wide", False, pc_ambiguous_as_wide_doc, validator=is_bool
+        "unicode.ambiguous_as_wide", False, pc_east_asian_width_doc, validator=is_bool
     )
     cf.register_option(
         "html.table_schema",
@@ -416,11 +406,12 @@ with cf.config_prefix("mode"):
     cf.register_option("sim_interactive", False, tc_sim_interactive_doc)
 
 
+# TODO better name?
 copy_on_write_doc = """
 : bool
-    Use new copy-view behaviour using Copy-on-Write. No longer used,
-    pandas now always uses Copy-on-Write behavior. This option will
-    be removed in pandas 4.0.
+    Use new copy-view behaviour using Copy-on-Write. Defaults to False,
+    unless overridden by the 'PANDAS_COPY_ON_WRITE' environment variable
+    (if set to "1" for True, needs to be set before pandas is imported).
 """
 
 
@@ -431,7 +422,7 @@ with cf.config_prefix("mode"):
         # to False. This environment variable can be set for testing.
         "warn"
         if os.environ.get("PANDAS_COPY_ON_WRITE", "0") == "warn"
-        else os.environ.get("PANDAS_COPY_ON_WRITE", "1") == "1",
+        else os.environ.get("PANDAS_COPY_ON_WRITE", "0") == "1",
         copy_on_write_doc,
         validator=is_one_of_factory([True, False, "warn"]),
     )
@@ -440,8 +431,8 @@ with cf.config_prefix("mode"):
 # user warnings
 chained_assignment = """
 : string
-    No longer used. This option has had no effect since SettingWithCopyWarning
-    was removed in pandas 3.0. This option will be removed in pandas 4.0.
+    Raise an exception, warn, or no action if trying to use chained assignment,
+    The default is warn
 """
 
 with cf.config_prefix("mode"):
@@ -466,34 +457,6 @@ with cf.config_prefix("mode"):
     )
 
 
-max_threads_doc = """
-: int or None
-    Maximum number of worker threads for parallel operations (e.g. ``read_csv``
-    for large files).  ``None`` (the default) means use ``min(os.cpu_count(), 6)``,
-    further limited to the CPUs available to the process (CPU affinity and cgroup
-    limits).  Set to ``1`` to disable parallel execution, or to a fixed number to
-    raise the cap or to limit thread usage when pandas is embedded in a larger
-    parallel workflow.  Ignored on Emscripten/Pyodide, which cannot spawn threads.
-"""
-
-
-def _is_positive_int_or_none(value: Any) -> None:
-    if value is None:
-        return
-    if isinstance(value, int) and value >= 1:
-        return
-    raise ValueError("Value must be a positive integer or None")
-
-
-with cf.config_prefix("mode"):
-    cf.register_option(
-        "max_threads",
-        None,
-        max_threads_doc,
-        validator=_is_positive_int_or_none,
-    )
-
-
 string_storage_doc = """
 : string
     The default storage for StringDtype.
@@ -504,6 +467,12 @@ def is_valid_string_storage(value: Any) -> None:
     legal_values = ["auto", "python", "pyarrow"]
     if value not in legal_values:
         msg = "Value must be one of python|pyarrow"
+        if value == "pyarrow_numpy":
+            # TODO: we can remove extra message after 3.0
+            msg += (
+                ". 'pyarrow_numpy' was specified, but this option should be "
+                "enabled using pandas.options.future.infer_string instead"
+            )
         raise ValueError(msg)
 
 
@@ -536,7 +505,7 @@ with cf.config_prefix("io.excel.xls"):
         "reader",
         "auto",
         reader_engine_doc.format(ext="xls", others=", ".join(_xls_options)),
-        validator=is_one_of_factory([*_xls_options, "auto"]),
+        validator=is_one_of_factory(_xls_options + ["auto"]),
     )
 
 with cf.config_prefix("io.excel.xlsm"):
@@ -544,7 +513,7 @@ with cf.config_prefix("io.excel.xlsm"):
         "reader",
         "auto",
         reader_engine_doc.format(ext="xlsm", others=", ".join(_xlsm_options)),
-        validator=is_one_of_factory([*_xlsm_options, "auto"]),
+        validator=is_one_of_factory(_xlsm_options + ["auto"]),
     )
 
 
@@ -553,7 +522,7 @@ with cf.config_prefix("io.excel.xlsx"):
         "reader",
         "auto",
         reader_engine_doc.format(ext="xlsx", others=", ".join(_xlsx_options)),
-        validator=is_one_of_factory([*_xlsx_options, "auto"]),
+        validator=is_one_of_factory(_xlsx_options + ["auto"]),
     )
 
 
@@ -562,7 +531,7 @@ with cf.config_prefix("io.excel.ods"):
         "reader",
         "auto",
         reader_engine_doc.format(ext="ods", others=", ".join(_ods_options)),
-        validator=is_one_of_factory([*_ods_options, "auto"]),
+        validator=is_one_of_factory(_ods_options + ["auto"]),
     )
 
 with cf.config_prefix("io.excel.xlsb"):
@@ -570,7 +539,7 @@ with cf.config_prefix("io.excel.xlsb"):
         "reader",
         "auto",
         reader_engine_doc.format(ext="xlsb", others=", ".join(_xlsb_options)),
-        validator=is_one_of_factory([*_xlsb_options, "auto"]),
+        validator=is_one_of_factory(_xlsb_options + ["auto"]),
     )
 
 # Set up the io.excel specific writer configuration.
@@ -687,7 +656,7 @@ def register_converter_cb(key: str) -> None:
         register_matplotlib_converters,
     )
 
-    if cf._global_config["plotting"]["matplotlib"]["register_converters"]:
+    if cf.get_option(key):
         register_matplotlib_converters()
     else:
         deregister_matplotlib_converters()
@@ -726,59 +695,44 @@ styler_render_repr = """
 styler_max_elements = """
 : int
     The maximum number of data-cell (<td>) elements that will be rendered before
-    trimming will occur over columns, rows or both if needed. Not applied to LaTeX.
+    trimming will occur over columns, rows or both if needed.
 """
 
 styler_max_rows = """
 : int, optional
     The maximum number of rows that will be rendered. May still be reduced to
-    satisfy ``max_elements``, which takes precedence. Not applied to LaTeX.
+    satisfy ``max_elements``, which takes precedence.
 """
 
 styler_max_columns = """
 : int, optional
     The maximum number of columns that will be rendered. May still be reduced to
-    satisfy ``max_elements``, which takes precedence. Not applied to LaTeX.
+    satisfy ``max_elements``, which takes precedence.
 """
 
 styler_precision = """
 : int
     The precision for floats and complex numbers.
-    This option affects only ``Styler`` rendering (e.g. ``DataFrame.style``), not
-    the default Series/DataFrame repr, which is controlled by the ``display.*``
-    options.
 """
 
 styler_decimal = """
 : str
     The character representation for the decimal separator for floats and complex.
-    This option affects only ``Styler`` rendering (e.g. ``DataFrame.style``), not
-    the default Series/DataFrame repr, which is controlled by the ``display.*``
-    options.
 """
 
 styler_thousands = """
 : str, optional
     The character representation for thousands separator for floats, int and complex.
-    This option affects only ``Styler`` rendering (e.g. ``DataFrame.style``), not
-    the default Series/DataFrame repr, which is controlled by the ``display.*``
-    options.
 """
 
 styler_na_rep = """
 : str, optional
     The string representation for values identified as missing.
-    This option affects only ``Styler`` rendering (e.g. ``DataFrame.style``), not
-    the default Series/DataFrame repr, which is controlled by the ``display.*``
-    options.
 """
 
 styler_escape = """
 : str, optional
     Whether to escape certain characters according to the given context; html or latex.
-    This option affects only ``Styler`` rendering (e.g. ``DataFrame.style``), not
-    the default Series/DataFrame repr, which is controlled by the ``display.*``
-    options.
 """
 
 styler_formatter = """
@@ -923,159 +877,23 @@ with cf.config_prefix("styler"):
     )
 
 
-# Used by CI to run the test suite with every enrolled future
-# option set to its old ("legacy") or future ("upcoming") value.
-_FUTURE_MODE = os.environ.get("PANDAS_FUTURE", "default")
-if _FUTURE_MODE not in ("legacy", "default", "upcoming"):
-    raise ValueError(
-        "PANDAS_FUTURE environment variable must be one of 'legacy', "
-        f"'default', or 'upcoming', got {_FUTURE_MODE!r}"
-    )
-
-_future_option_behaviors: dict[str, dict[str, Any]] = {}
-
-
-def _register_future_option(
-    name: str,
-    *,
-    legacy: Any,
-    default: Any,
-    upcoming: Any,
-    doc: str,
-    validator: Callable[[object], Any],
-    enrolled: bool = True,
-) -> None:
-    """
-    Register an option under the "future" prefix.
-
-    The option's value is determined by, in order of precedence:
-
-    1. The PANDAS_FUTURE_<NAME> environment variable, if set: "0" means
-       False and "1" means True; any other value raises.
-    2. The PANDAS_FUTURE environment variable ("legacy", "default", or
-       "upcoming"), if the option is enrolled.
-    3. The ``default`` value.
-
-    ``enrolled=False`` registers the option but exempts it from
-    PANDAS_FUTURE, for options whose non-default values do not yet pass the
-    test suite.
-    """
-    env_override = os.environ.get(f"PANDAS_FUTURE_{name.upper()}")
-    if env_override is not None:
-        if env_override not in ("0", "1"):
-            raise ValueError(
-                f"PANDAS_FUTURE_{name.upper()} environment variable must be "
-                f"'0' or '1', got {env_override!r}"
-            )
-        value = env_override == "1"
-    elif enrolled:
-        value = {"legacy": legacy, "default": default, "upcoming": upcoming}[
-            _FUTURE_MODE
-        ]
-    else:
-        value = default
-    _future_option_behaviors[name] = {
-        "legacy": legacy,
-        "default": default,
-        "upcoming": upcoming,
-        "enrolled": enrolled,
-    }
-    cf.register_option(name, value, doc, validator=validator)
-
-
 with cf.config_prefix("future"):
-    _register_future_option(
+    cf.register_option(
         "infer_string",
-        legacy=False,
-        default=True,
-        upcoming=True,
-        doc="Whether to infer a sequence of str objects as str dtype rather "
-        "than object dtype. This has been the default since pandas 3.0. This "
-        "option is deprecated and will be removed in pandas 4.0, at which "
-        "point str dtype will always be inferred.",
+        True if os.environ.get("PANDAS_FUTURE_INFER_STRING", "0") == "1" else False,
+        "Whether to infer sequence of str objects as pyarrow string "
+        "dtype, which will be the default in pandas 3.0 "
+        "(at which point this option will be deprecated).",
         validator=is_one_of_factory([True, False]),
     )
 
     cf.register_option(
         "no_silent_downcasting",
         False,
-        "This option is deprecated and will be removed in a future version. "
-        "It has no effect.",
+        "Whether to opt-in to the future behavior which will *not* silently "
+        "downcast results from Series and DataFrame `where`, `mask`, and `clip` "
+        "methods. "
+        "Silent downcasting will be removed in pandas 3.0 "
+        "(at which point this option will be deprecated).",
         validator=is_one_of_factory([True, False]),
     )
-
-    _register_future_option(
-        "distinguish_nan_and_na",
-        legacy=False,
-        default=False,
-        upcoming=True,
-        # the test suite does not yet pass with the upcoming value
-        enrolled=False,
-        doc="Whether to treat NaN entries as distinct from pd.NA in "
-        "numpy-nullable and pyarrow float dtypes. By default treats both "
-        "interchangeable as missing values (NaN will be coerced to NA). "
-        "See discussion in "
-        "https://github.com/pandas-dev/pandas/issues/32265",
-        validator=is_one_of_factory([True, False]),
-    )
-
-    _register_future_option(
-        "python_scalars",
-        legacy=False,
-        default=False,
-        upcoming=True,
-        doc="Whether to return Python scalars instead of NumPy or PyArrow "
-        "scalars. "
-        "Values from object dtype data where the operation coerces them to NumPy "
-        "floats remain NumPy scalars. "
-        "Currently experimental, setting to True is not recommended for end users.",
-        validator=is_one_of_factory([True, False]),
-    )
-
-    _register_future_option(
-        "infer_freq_returns_offset",
-        legacy=False,
-        default=None,
-        upcoming=True,
-        # the test suite does not yet pass with the legacy or upcoming values
-        enrolled=False,
-        doc="Whether pd.infer_freq and .inferred_freq return a BaseOffset object "
-        "instead of a string, which will be the default in a future version of "
-        "pandas. Set to True to opt in to the future behavior, or False to "
-        "keep the old behavior and silence the warning.",
-        validator=is_one_of_factory([True, False, None]),
-    )
-
-
-# GH#59502
-cf.deprecate_option("future.no_silent_downcasting", Pandas4Warning)
-# GH#68436
-cf.deprecate_option(
-    "future.infer_string",
-    Pandas4Warning,
-    msg=(
-        "The 'future.infer_string' option is deprecated and will be removed in "
-        "pandas 4.0. Inferring str dtype for string data has been the default "
-        "since pandas 3.0, and it will no longer be possible to disable it."
-    ),
-)
-cf.deprecate_option(
-    "mode.copy_on_write",
-    Pandas4Warning,
-    msg=(
-        "The 'mode.copy_on_write' option is deprecated. Copy-on-Write can no longer "
-        "be disabled (it is always enabled with pandas >= 3.0), and setting the option "
-        "has no impact. This option will be removed in pandas 4.0."
-    ),
-)
-cf.deprecate_option(
-    "mode.chained_assignment",
-    Pandas4Warning,
-    msg=(
-        "The 'mode.chained_assignment' option is deprecated. It has had no effect "
-        "since pandas 3.0, which removed the SettingWithCopyWarning it controlled. "
-        "Chained assignment now emits a ChainedAssignmentError warning instead; use "
-        "warnings.filterwarnings with category=ChainedAssignmentError to silence or "
-        "escalate it. This option will be removed in pandas 4.0."
-    ),
-)

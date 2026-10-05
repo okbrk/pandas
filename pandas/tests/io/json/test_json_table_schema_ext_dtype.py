@@ -8,7 +8,13 @@ import json
 
 import pytest
 
-import pandas as pd
+from pandas import (
+    NA,
+    DataFrame,
+    Index,
+    array,
+    read_json,
+)
 import pandas._testing as tm
 from pandas.core.arrays.integer import Int64Dtype
 from pandas.core.arrays.string_ import StringDtype
@@ -30,12 +36,12 @@ from pandas.io.json._table_schema import (
 
 class TestBuildSchema:
     def test_build_table_schema(self):
-        df = pd.DataFrame(
+        df = DataFrame(
             {
                 "A": DateArray([dt.date(2021, 10, 10)]),
                 "B": DecimalArray([decimal.Decimal(10)]),
-                "C": pd.array(["pandas"], dtype="string"),
-                "D": pd.array([10], dtype="Int64"),
+                "C": array(["pandas"], dtype="string"),
+                "D": array([10], dtype="Int64"),
             }
         )
         result = build_table_schema(df, version=False)
@@ -44,7 +50,7 @@ class TestBuildSchema:
                 {"name": "index", "type": "integer"},
                 {"name": "A", "type": "any", "extDtype": "DateDtype"},
                 {"name": "B", "type": "number", "extDtype": "decimal"},
-                {"name": "C", "type": "string", "extDtype": "string"},
+                {"name": "C", "type": "any", "extDtype": "string"},
                 {"name": "D", "type": "integer", "extDtype": "Int64"},
             ],
             "primaryKey": ["index"],
@@ -73,15 +79,15 @@ class TestTableSchemaType:
 
     @pytest.mark.parametrize("box", [lambda x: x, Series])
     def test_as_json_table_type_ext_string_array_dtype(self, box):
-        string_data = box(pd.array(["pandas"], dtype="string"))
-        assert as_json_table_type(string_data.dtype) == "string"
+        string_data = box(array(["pandas"], dtype="string"))
+        assert as_json_table_type(string_data.dtype) == "any"
 
     def test_as_json_table_type_ext_string_dtype(self):
-        assert as_json_table_type(StringDtype()) == "string"
+        assert as_json_table_type(StringDtype()) == "any"
 
     @pytest.mark.parametrize("box", [lambda x: x, Series])
     def test_as_json_table_type_ext_integer_array_dtype(self, box):
-        integer_data = box(pd.array([10], dtype="Int64"))
+        integer_data = box(array([10], dtype="Int64"))
         assert as_json_table_type(integer_data.dtype) == "integer"
 
     def test_as_json_table_type_ext_integer_dtype(self):
@@ -102,12 +108,12 @@ class TestTableOrient:
     @pytest.fixture
     def sa(self):
         """Fixture for creating a StringDtype array."""
-        return pd.array(["pandas"], dtype="string")
+        return array(["pandas"], dtype="string")
 
     @pytest.fixture
     def ia(self):
         """Fixture for creating an Int64Dtype array."""
-        return pd.array([10], dtype="Int64")
+        return array([10], dtype="Int64")
 
     def test_build_date_series(self, da):
         s = Series(da, name="a")
@@ -153,7 +159,7 @@ class TestTableOrient:
         expected = OrderedDict(
             [
                 ("schema", schema),
-                ("data", [OrderedDict([("id", 0), ("a", "10")])]),
+                ("data", [OrderedDict([("id", 0), ("a", 10.0)])]),
             ]
         )
 
@@ -170,7 +176,7 @@ class TestTableOrient:
 
         fields = [
             {"name": "id", "type": "integer"},
-            {"name": "a", "type": "string", "extDtype": "string"},
+            {"name": "a", "type": "any", "extDtype": "string"},
         ]
 
         schema = {"fields": fields, "primaryKey": ["id"]}
@@ -210,7 +216,7 @@ class TestTableOrient:
         assert result == expected
 
     def test_to_json(self, da, dc, sa, ia):
-        df = pd.DataFrame(
+        df = DataFrame(
             {
                 "A": da,
                 "B": dc,
@@ -229,7 +235,7 @@ class TestTableOrient:
             OrderedDict({"name": "idx", "type": "integer"}),
             OrderedDict({"name": "A", "type": "any", "extDtype": "DateDtype"}),
             OrderedDict({"name": "B", "type": "number", "extDtype": "decimal"}),
-            OrderedDict({"name": "C", "type": "string", "extDtype": "string"}),
+            OrderedDict({"name": "C", "type": "any", "extDtype": "string"}),
             OrderedDict({"name": "D", "type": "integer", "extDtype": "Int64"}),
         ]
 
@@ -239,7 +245,7 @@ class TestTableOrient:
                 [
                     ("idx", 0),
                     ("A", "2021-10-10T00:00:00.000"),
-                    ("B", "10"),
+                    ("B", 10.0),
                     ("C", "pandas"),
                     ("D", 10),
                 ]
@@ -251,17 +257,17 @@ class TestTableOrient:
 
     def test_json_ext_dtype_reading_roundtrip(self):
         # GH#40255
-        df = pd.DataFrame(
+        df = DataFrame(
             {
-                "a": Series([2, pd.NA], dtype="Int64"),
-                "b": Series([1.5, pd.NA], dtype="Float64"),
-                "c": Series([True, pd.NA], dtype="boolean"),
+                "a": Series([2, NA], dtype="Int64"),
+                "b": Series([1.5, NA], dtype="Float64"),
+                "c": Series([True, NA], dtype="boolean"),
             },
-            index=pd.Index([1, pd.NA], dtype="Int64"),
+            index=Index([1, NA], dtype="Int64"),
         )
         expected = df.copy()
         data_json = df.to_json(orient="table", indent=4)
-        result = pd.read_json(StringIO(data_json), orient="table")
+        result = read_json(StringIO(data_json), orient="table")
         tm.assert_frame_equal(result, expected)
 
     def test_json_ext_dtype_reading(self):
@@ -285,6 +291,6 @@ class TestTableOrient:
                 }
             ]
         }"""
-        result = pd.read_json(StringIO(data_json), orient="table")
-        expected = pd.DataFrame({"a": Series([2, pd.NA], dtype="Int64")})
+        result = read_json(StringIO(data_json), orient="table")
+        expected = DataFrame({"a": Series([2, NA], dtype="Int64")})
         tm.assert_frame_equal(result, expected)

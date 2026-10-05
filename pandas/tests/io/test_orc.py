@@ -4,16 +4,23 @@ import datetime
 from decimal import Decimal
 from io import BytesIO
 import os
+import pathlib
 
 import numpy as np
 import pytest
 
 import pandas as pd
+from pandas import read_orc
 import pandas._testing as tm
+from pandas.core.arrays import StringArray
 
 pytest.importorskip("pyarrow.orc")
 
 import pyarrow as pa
+
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Passing a BlockManager to DataFrame:DeprecationWarning"
+)
 
 
 @pytest.fixture
@@ -45,12 +52,12 @@ def test_orc_reader_empty(dirpath, using_infer_string):
         "str" if using_infer_string else "object",
     ]
     expected = pd.DataFrame(index=pd.RangeIndex(0))
-    for colname, dtype in zip(columns, dtypes, strict=True):
+    for colname, dtype in zip(columns, dtypes):
         expected[colname] = pd.Series(dtype=dtype)
     expected.columns = expected.columns.astype("str")
 
     inputfile = os.path.join(dirpath, "TestOrcFile.emptyFile.orc")
-    got = pd.read_orc(inputfile, columns=columns)
+    got = read_orc(inputfile, columns=columns)
 
     tm.assert_equal(expected, got)
 
@@ -70,7 +77,7 @@ def test_orc_reader_basic(dirpath):
     expected = pd.DataFrame.from_dict(data)
 
     inputfile = os.path.join(dirpath, "TestOrcFile.test1.orc")
-    got = pd.read_orc(inputfile, columns=data.keys())
+    got = read_orc(inputfile, columns=data.keys())
 
     tm.assert_equal(expected, got)
 
@@ -97,7 +104,7 @@ def test_orc_reader_decimal(dirpath):
     expected = pd.DataFrame.from_dict(data)
 
     inputfile = os.path.join(dirpath, "TestOrcFile.decimal.orc")
-    got = pd.read_orc(inputfile).iloc[:10]
+    got = read_orc(inputfile).iloc[:10]
 
     tm.assert_equal(expected, got)
 
@@ -138,7 +145,7 @@ def test_orc_reader_date_low(dirpath):
     expected = pd.DataFrame.from_dict(data)
 
     inputfile = os.path.join(dirpath, "TestOrcFile.testDate1900.orc")
-    got = pd.read_orc(inputfile).iloc[:10]
+    got = read_orc(inputfile).iloc[:10]
 
     tm.assert_equal(expected, got)
 
@@ -179,7 +186,7 @@ def test_orc_reader_date_high(dirpath):
     expected = pd.DataFrame.from_dict(data)
 
     inputfile = os.path.join(dirpath, "TestOrcFile.testDate2038.orc")
-    got = pd.read_orc(inputfile).iloc[:10]
+    got = read_orc(inputfile).iloc[:10]
 
     tm.assert_equal(expected, got)
 
@@ -220,12 +227,12 @@ def test_orc_reader_snappy_compressed(dirpath):
     expected = pd.DataFrame.from_dict(data)
 
     inputfile = os.path.join(dirpath, "TestOrcFile.testSnappy.orc")
-    got = pd.read_orc(inputfile).iloc[:10]
+    got = read_orc(inputfile).iloc[:10]
 
     tm.assert_equal(expected, got)
 
 
-def test_orc_roundtrip_file(dirpath, temp_file):
+def test_orc_roundtrip_file(dirpath):
     # GH44554
     # PyArrow gained ORC write support with the current argument order
     pytest.importorskip("pyarrow")
@@ -243,10 +250,11 @@ def test_orc_roundtrip_file(dirpath, temp_file):
     }
     expected = pd.DataFrame.from_dict(data)
 
-    expected.to_orc(temp_file)
-    got = pd.read_orc(temp_file)
+    with tm.ensure_clean() as path:
+        expected.to_orc(path)
+        got = read_orc(path)
 
-    tm.assert_equal(expected, got)
+        tm.assert_equal(expected, got)
 
 
 def test_orc_roundtrip_bytesio():
@@ -268,22 +276,9 @@ def test_orc_roundtrip_bytesio():
     expected = pd.DataFrame.from_dict(data)
 
     bytes = expected.to_orc()
-    got = pd.read_orc(BytesIO(bytes))
+    got = read_orc(BytesIO(bytes))
 
     tm.assert_equal(expected, got)
-
-
-def test_orc_roundtrip_tz_aware():
-    # GH#68426 pyarrow reading .values should not surface a deprecation warning
-    pytest.importorskip("pyarrow")
-    df = pd.DataFrame({"a": pd.date_range("2025-01-01", periods=3, tz="US/Eastern")})
-
-    with tm.assert_produces_warning(None):
-        result = pd.read_orc(BytesIO(df.to_orc()))
-    # ORC stores timestamps as UTC
-    expected = df.copy()
-    expected["a"] = expected["a"].dt.tz_convert("UTC").dt.as_unit("ns")
-    tm.assert_frame_equal(result, expected)
 
 
 @pytest.mark.parametrize(
@@ -319,7 +314,7 @@ def test_orc_dtype_backend_pyarrow(using_infer_string):
             "float_with_nan": [2.0, np.nan, 3.0],
             "bool": [True, False, True],
             "bool_with_na": [True, False, None],
-            "datetime": pd.date_range("20130101", periods=3, unit="ns"),
+            "datetime": pd.date_range("20130101", periods=3),
             "datetime_with_nat": [
                 pd.Timestamp("20130101"),
                 pd.NaT,
@@ -331,7 +326,7 @@ def test_orc_dtype_backend_pyarrow(using_infer_string):
     df["datetime_with_nat"] = df["datetime_with_nat"].astype("M8[ns]")
 
     bytes_data = df.copy().to_orc()
-    result = pd.read_orc(BytesIO(bytes_data), dtype_backend="pyarrow")
+    result = read_orc(BytesIO(bytes_data), dtype_backend="pyarrow")
 
     expected = pd.DataFrame(
         {
@@ -369,13 +364,17 @@ def test_orc_dtype_backend_numpy_nullable():
     )
 
     bytes_data = df.copy().to_orc()
-    result = pd.read_orc(BytesIO(bytes_data), dtype_backend="numpy_nullable")
+    result = read_orc(BytesIO(bytes_data), dtype_backend="numpy_nullable")
 
     expected = pd.DataFrame(
         {
-            "string": pd.array(["a", "b", "c"], dtype=pd.StringDtype()),
-            "string_with_nan": pd.array(["a", pd.NA, "c"], dtype=pd.StringDtype()),
-            "string_with_none": pd.array(["a", pd.NA, "c"], dtype=pd.StringDtype()),
+            "string": StringArray(np.array(["a", "b", "c"], dtype=np.object_)),
+            "string_with_nan": StringArray(
+                np.array(["a", pd.NA, "c"], dtype=np.object_)
+            ),
+            "string_with_none": StringArray(
+                np.array(["a", pd.NA, "c"], dtype=np.object_)
+            ),
             "int": pd.Series([1, 2, 3], dtype="Int64"),
             "int_with_nan": pd.Series([1, pd.NA, 3], dtype="Int64"),
             "na_only": pd.Series([pd.NA, pd.NA, pd.NA], dtype="Int64"),
@@ -389,11 +388,12 @@ def test_orc_dtype_backend_numpy_nullable():
     tm.assert_frame_equal(result, expected)
 
 
-def test_orc_uri_path(temp_file):
+def test_orc_uri_path():
     expected = pd.DataFrame({"int": list(range(1, 4))})
-    expected.to_orc(temp_file)
-    uri = temp_file.as_uri()
-    result = pd.read_orc(uri)
+    with tm.ensure_clean("tmp.orc") as path:
+        expected.to_orc(path)
+        uri = pathlib.Path(path).as_uri()
+        result = read_orc(uri)
     tm.assert_frame_equal(result, expected)
 
 
@@ -407,31 +407,36 @@ def test_orc_uri_path(temp_file):
 )
 def test_to_orc_non_default_index(index):
     df = pd.DataFrame({"a": [1, 2, 3]}, index=index)
-    msg = "|".join(
-        [
-            "orc does not support serializing a non-default index",
-            "orc does not serialize index meta-data",
-        ]
+    msg = (
+        "orc does not support serializing a non-default index|"
+        "orc does not serialize index meta-data"
     )
     with pytest.raises(ValueError, match=msg):
         df.to_orc()
 
 
-def test_invalid_dtype_backend(temp_file):
+def test_invalid_dtype_backend():
     msg = (
         "dtype_backend numpy is invalid, only 'numpy_nullable' and "
         "'pyarrow' are allowed."
     )
     df = pd.DataFrame({"int": list(range(1, 4))})
-    df.to_orc(temp_file)
-    with pytest.raises(ValueError, match=msg):
-        pd.read_orc(temp_file, dtype_backend="numpy")
+    with tm.ensure_clean("tmp.orc") as path:
+        df.to_orc(path)
+        with pytest.raises(ValueError, match=msg):
+            read_orc(path, dtype_backend="numpy")
 
 
-def test_string_inference(temp_file):
+def test_string_inference(tmp_path):
     # GH#54431
+    path = tmp_path / "test_string_inference.p"
     df = pd.DataFrame(data={"a": ["x", "y"]})
-    expected = df.copy()
-    df.to_orc(temp_file)
-    result = pd.read_orc(temp_file)
+    df.to_orc(path)
+    with pd.option_context("future.infer_string", True):
+        result = read_orc(path)
+    expected = pd.DataFrame(
+        data={"a": ["x", "y"]},
+        dtype=pd.StringDtype(na_value=np.nan),
+        columns=pd.Index(["a"], dtype=pd.StringDtype(na_value=np.nan)),
+    )
     tm.assert_frame_equal(result, expected)

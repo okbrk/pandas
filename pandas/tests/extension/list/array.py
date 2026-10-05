@@ -30,7 +30,8 @@ class ListDtype(ExtensionDtype):
     name = "list"
     na_value = np.nan
 
-    def construct_array_type(self) -> type_t[ListArray]:
+    @classmethod
+    def construct_array_type(cls) -> type_t[ListArray]:
         """
         Return the array type associated with this dtype.
 
@@ -80,7 +81,8 @@ class ListArray(ExtensionArray):
         # an ndarary.
         indexer = np.asarray(indexer)
         msg = (
-            "Index is out of bounds or cannot do a non-empty take from an empty array."
+            "Index is out of bounds or cannot do a "
+            "non-empty take from an empty array."
         )
 
         if allow_fill:
@@ -125,12 +127,12 @@ class ListArray(ExtensionArray):
         return cls(data)
 
 
-def make_data(n: int):
+def make_data():
     # TODO: Use a regular dict. See _NDFrameIndexer._setitem_with_indexer
     rng = np.random.default_rng(2)
-    data = np.empty(n, dtype=object)
+    data = np.empty(100, dtype=object)
     data[:] = [
         [rng.choice(list(string.ascii_letters)) for _ in range(rng.integers(0, 10))]
-        for _ in range(n)
+        for _ in range(100)
     ]
     return data

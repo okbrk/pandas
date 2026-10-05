@@ -8,7 +8,6 @@ from pandas import (
     DataFrame,
     Index,
     Series,
-    StringDtype,
 )
 from pandas.arrays import StringArray
 
@@ -291,10 +290,10 @@ class StringArrayConstruction:
         self.series_arr_nan = np.concatenate([self.series_arr, np.array([NA] * 1000)])
 
     def time_string_array_construction(self):
-        StringArray(self.series_arr, dtype=StringDtype())
+        StringArray(self.series_arr)
 
     def time_string_array_with_nan_construction(self):
-        StringArray(self.series_arr_nan, dtype=StringDtype())
+        StringArray(self.series_arr_nan)
 
     def peakmem_stringarray_construction(self):
-        StringArray(self.series_arr, dtype=StringDtype())
+        StringArray(self.series_arr)

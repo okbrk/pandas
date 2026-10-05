@@ -7,7 +7,6 @@ from pandas._libs.tslibs import (
     offsets,
     to_offset,
 )
-from pandas.errors import Pandas4Warning
 
 import pandas._testing as tm
 
@@ -48,6 +47,7 @@ def test_to_offset_negative(freqstr, expected):
     assert result.n == expected
 
 
+@pytest.mark.filterwarnings("ignore:.*'m' is deprecated.*:FutureWarning")
 @pytest.mark.parametrize(
     "freqstr",
     [
@@ -94,20 +94,6 @@ def test_to_offset_invalid(freqstr):
         to_offset(freqstr)
 
 
-@pytest.mark.parametrize(
-    "freqstr,alias",
-    [
-        ("2.5foo", "foo"),
-        ("2.5FOO", "FOO"),
-    ],
-)
-def test_to_offset_fractional_invalid_alias(freqstr, alias):
-    msg = rf"Invalid frequency: {alias}"
-
-    with pytest.raises(ValueError, match=msg):
-        to_offset(freqstr)
-
-
 def test_to_offset_no_evaluate():
     msg = str(("", ""))
     with pytest.raises(TypeError, match=msg):
@@ -144,7 +130,7 @@ def test_to_offset_leading_zero(freqstr, expected):
 
 
 @pytest.mark.parametrize(
-    "freqstr,expected,wrn", [("+1d", 1, Pandas4Warning), ("+2h30min", 150, None)]
+    "freqstr,expected,wrn", [("+1d", 1, FutureWarning), ("+2h30min", 150, None)]
 )
 def test_to_offset_leading_plus(freqstr, expected, wrn):
     msg = "'d' is deprecated and will be removed in a future version."
@@ -161,7 +147,7 @@ def test_to_offset_leading_plus(freqstr, expected, wrn):
         ({"days": -1, "seconds": 1}, offsets.Second(-86399)),
         ({"hours": 1, "minutes": 10}, offsets.Minute(70)),
         ({"hours": 1, "minutes": -10}, offsets.Minute(50)),
-        ({"weeks": 1}, offsets.Hour(168)),
+        ({"weeks": 1}, offsets.Day(7)),
         ({"hours": 1}, offsets.Hour(1)),
         ({"hours": 1}, to_offset("60min")),
         ({"microseconds": 1}, offsets.Micro(1)),
@@ -221,12 +207,10 @@ def test_to_offset_lowercase_frequency_raises(freq_depr):
 @pytest.mark.parametrize("freq_depr", ["2MIN", "2Us", "2NS"])
 def test_to_offset_uppercase_frequency_deprecated(freq_depr):
     # GH#54939
-    depr_msg = (
-        f"'{freq_depr[1:]}' is deprecated and will be removed in a "
-        f"future version, please use '{freq_depr.lower()[1:]}' instead."
-    )
+    depr_msg = f"'{freq_depr[1:]}' is deprecated and will be removed in a "
+    f"future version, please use '{freq_depr.lower()[1:]}' instead."
 
-    with tm.assert_produces_warning(Pandas4Warning, match=depr_msg):
+    with tm.assert_produces_warning(FutureWarning, match=depr_msg):
         to_offset(freq_depr)
 
 
@@ -242,24 +226,14 @@ def test_to_offset_lowercase_frequency_deprecated(freq_depr, expected):
     # GH#54939, GH#58998
     msg = f"'{freq_depr[1:]}' is deprecated and will be removed in a future version."
 
-    with tm.assert_produces_warning(Pandas4Warning, match=msg):
+    with tm.assert_produces_warning(FutureWarning, match=msg):
         result = to_offset(freq_depr)
     assert result == expected
 
 
-@pytest.mark.parametrize(
-    "freq,expected",
-    [
-        ("2H", "h"),
-        ("2BH", "bh"),
-        ("2S", "s"),
-        ("2.5H", "h"),
-        ("2.5BH", "bh"),
-        ("2.5S", "s"),
-    ],
-)
-def test_to_offset_uppercase_frequency_raises(freq, expected):
-    msg = f"Invalid frequency: {re.escape(freq)}.*Did you mean {expected}"
+@pytest.mark.parametrize("freq", ["2H", "2BH", "2S"])
+def test_to_offset_uppercase_frequency_raises(freq):
+    msg = f"Invalid frequency: {freq}"
 
     with pytest.raises(ValueError, match=msg):
         to_offset(freq)

@@ -4,6 +4,10 @@ import pytest
 from pandas.core.dtypes.common import is_float_dtype
 
 import pandas as pd
+from pandas import (
+    DataFrame,
+    Series,
+)
 import pandas._testing as tm
 from pandas.tests.copy_view.util import get_array
 
@@ -13,15 +17,15 @@ def backend(request):
     if request.param == "numpy":
 
         def make_dataframe(*args, **kwargs):
-            return pd.DataFrame(*args, **kwargs)
+            return DataFrame(*args, **kwargs)
 
         def make_series(*args, **kwargs):
-            return pd.Series(*args, **kwargs)
+            return Series(*args, **kwargs)
 
     elif request.param == "nullable":
 
         def make_dataframe(*args, **kwargs):
-            df = pd.DataFrame(*args, **kwargs)
+            df = DataFrame(*args, **kwargs)
             df_nullable = df.convert_dtypes()
             # convert_dtypes will try to cast float to int if there is no loss in
             # precision -> undo that change
@@ -34,7 +38,7 @@ def backend(request):
             return df_nullable.copy()
 
         def make_series(*args, **kwargs):
-            ser = pd.Series(*args, **kwargs)
+            ser = Series(*args, **kwargs)
             return ser.convert_dtypes().copy()
 
     return request.param, make_dataframe, make_series
@@ -52,8 +56,6 @@ def test_subset_column_selection(backend):
     df_orig = df.copy()
 
     subset = df[["a", "c"]]
-
-    assert subset.index is not df.index
 
     # the subset shares memory ...
     assert np.shares_memory(get_array(subset, "a"), get_array(df, "a"))
@@ -98,7 +100,6 @@ def test_subset_row_slice(backend):
     subset = df[1:3]
     subset._mgr._verify_integrity()
 
-    assert subset.columns is not df.columns
     assert np.shares_memory(get_array(subset, "a"), get_array(df, "a"))
 
     subset.iloc[0, 0] = 0
@@ -127,7 +128,6 @@ def test_subset_column_slice(backend, dtype):
     subset = df.iloc[:, 1:]
     subset._mgr._verify_integrity()
 
-    assert subset.index is not df.index
     assert np.shares_memory(get_array(subset, "b"), get_array(df, "b"))
 
     subset.iloc[0, 0] = 0
@@ -173,9 +173,6 @@ def test_subset_loc_rows_columns(
 
     subset = df.loc[row_indexer, column_indexer]
 
-    assert subset.index is not df.index
-    assert subset.columns is not df.columns
-
     # modifying the subset never modifies the parent
     subset.iloc[0, 0] = 0
 
@@ -218,9 +215,6 @@ def test_subset_iloc_rows_columns(
     df_orig = df.copy()
 
     subset = df.iloc[row_indexer, column_indexer]
-
-    assert subset.index is not df.index
-    assert subset.columns is not df.columns
 
     # modifying the subset never modifies the parent
     subset.iloc[0, 0] = 0
@@ -403,7 +397,7 @@ def test_subset_set_with_column_indexer(backend, indexer):
         lambda df: df[["a", "b"]].iloc[0:2],
         lambda df: df[["a", "b"]].loc[0:1],
         lambda df: df[0:2].iloc[:, 0:2],
-        lambda df: df[0:2].loc[:, "a":"b"],
+        lambda df: df[0:2].loc[:, "a":"b"],  # type: ignore[misc]
     ],
     ids=[
         "row-getitem-slice",
@@ -471,10 +465,14 @@ def test_subset_chained_getitem_column(backend, dtype):
 @pytest.mark.parametrize(
     "method",
     [
-        lambda s: s["a":"c"]["a":"b"],
+        lambda s: s["a":"c"]["a":"b"],  # type: ignore[misc]
         lambda s: s.iloc[0:3].iloc[0:2],
-        lambda s: s.loc["a":"c"].loc["a":"b"],
-        lambda s: s.loc["a":"c"].iloc[0:3].iloc[0:2].loc["a":"b"].iloc[0:1],
+        lambda s: s.loc["a":"c"].loc["a":"b"],  # type: ignore[misc]
+        lambda s: s.loc["a":"c"]  # type: ignore[misc]
+        .iloc[0:3]
+        .iloc[0:2]
+        .loc["a":"b"]  # type: ignore[misc]
+        .iloc[0:1],
     ],
     ids=["getitem", "iloc", "loc", "long-chain"],
 )
@@ -499,7 +497,7 @@ def test_subset_chained_getitem_series(backend, method):
 
 def test_subset_chained_single_block_row():
     # not parametrizing this for dtype backend, since this explicitly tests single block
-    df = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
+    df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": [7, 8, 9]})
     df_orig = df.copy()
 
     # modify subset -> don't modify parent
@@ -510,7 +508,7 @@ def test_subset_chained_single_block_row():
     # modify parent -> don't modify subset
     subset = df[:].iloc[0].iloc[0:2]
     df.iloc[0, 0] = 0
-    expected = pd.Series([1, 4], index=["a", "b"], name=0)
+    expected = Series([1, 4], index=["a", "b"], name=0)
     tm.assert_series_equal(subset, expected)
 
 
@@ -536,8 +534,6 @@ def test_null_slice(backend, method):
 
     # we always return new objects (shallow copy), regardless of CoW or not
     assert df2 is not df
-    assert df2.index is not df.index
-    assert df2.columns is not df.columns
 
     # and those trigger CoW when mutated
     df2.iloc[0, 0] = 0
@@ -562,7 +558,6 @@ def test_null_slice_series(backend, method):
 
     # we always return new objects, regardless of CoW or not
     assert s2 is not s
-    assert s2.index is not s.index
 
     # and those trigger CoW when mutated
     s2.iloc[0] = 0
@@ -584,7 +579,6 @@ def test_series_getitem_slice(backend):
 
     subset = s[:]
     assert np.shares_memory(get_array(subset), get_array(s))
-    assert subset.index is not s.index
 
     subset.iloc[0] = 0
 
@@ -599,18 +593,17 @@ def test_series_getitem_slice(backend):
 
 def test_series_getitem_ellipsis():
     # Case: taking a view of a Series using Ellipsis + afterwards modifying the subset
-    s = pd.Series([1, 2, 3])
+    s = Series([1, 2, 3])
     s_orig = s.copy()
 
     subset = s[...]
     assert np.shares_memory(get_array(subset), get_array(s))
-    assert subset.index is not s.index
 
     subset.iloc[0] = 0
 
     assert not np.shares_memory(get_array(subset), get_array(s))
 
-    expected = pd.Series([0, 2, 3])
+    expected = Series([0, 2, 3])
     tm.assert_series_equal(subset, expected)
 
     # original parent series is not modified (CoW)
@@ -708,9 +701,7 @@ def test_column_as_series(backend):
 
     s = df["a"]
 
-    assert s.index is not df.index
     assert np.shares_memory(get_array(s, "a"), get_array(df, "a"))
-
     s[0] = 0
 
     expected = Series([0, 2, 3], name="a")
@@ -763,8 +754,6 @@ def test_column_as_series_no_item_cache(request, backend, method):
     s2 = method(df)
 
     assert s1 is not s2
-    assert s1.index is not df.index
-    assert s1.index is not s2.index
 
     s1.iloc[0] = 0
 
@@ -809,7 +798,7 @@ def test_dataframe_add_column_from_series(backend):
 def test_set_value_copy_only_necessary_column(indexer_func, indexer, val, col):
     # When setting inplace, only copy column that is modified instead of the whole
     # block (by splitting the block)
-    df = pd.DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": col})
+    df = DataFrame({"a": [1, 2, 3], "b": [4, 5, 6], "c": col})
     df_orig = df.copy()
     view = df[:]
 
@@ -825,7 +814,7 @@ def test_set_value_copy_only_necessary_column(indexer_func, indexer, val, col):
 
 
 def test_series_midx_slice():
-    ser = pd.Series([1, 2, 3], index=pd.MultiIndex.from_arrays([[1, 1, 2], [3, 4, 5]]))
+    ser = Series([1, 2, 3], index=pd.MultiIndex.from_arrays([[1, 1, 2], [3, 4, 5]]))
     ser_orig = ser.copy()
     result = ser[1]
     assert np.shares_memory(get_array(ser), get_array(result))
@@ -834,7 +823,7 @@ def test_series_midx_slice():
 
 
 def test_getitem_midx_slice():
-    df = pd.DataFrame({("a", "x"): [1, 2], ("a", "y"): 1, ("b", "x"): 2})
+    df = DataFrame({("a", "x"): [1, 2], ("a", "y"): 1, ("b", "x"): 2})
     df_orig = df.copy()
     new_df = df[("a",)]
 
@@ -846,14 +835,14 @@ def test_getitem_midx_slice():
 
 
 def test_series_midx_tuples_slice():
-    ser = pd.Series(
+    ser = Series(
         [1, 2, 3],
         index=pd.MultiIndex.from_tuples([((1, 2), 3), ((1, 2), 4), ((2, 3), 4)]),
     )
     result = ser[(1, 2)]
     assert np.shares_memory(get_array(ser), get_array(result))
     result.iloc[0] = 100
-    expected = pd.Series(
+    expected = Series(
         [1, 2, 3],
         index=pd.MultiIndex.from_tuples([((1, 2), 3), ((1, 2), 4), ((2, 3), 4)]),
     )
@@ -871,7 +860,7 @@ def test_midx_read_only_bool_indexer():
     cols = pd.MultiIndex.from_tuples(
         [("a", "foo"), ("a", "bar"), ("b", "foo"), ("b", "bah")], names=["lvl0", "lvl1"]
     )
-    df = pd.DataFrame(1, index=idx, columns=cols).sort_index().sort_index(axis=1)
+    df = DataFrame(1, index=idx, columns=cols).sort_index().sort_index(axis=1)
 
     mask = df[("a", "foo")] == 1
     expected_mask = mask.copy()
@@ -882,8 +871,8 @@ def test_midx_read_only_bool_indexer():
 
 
 def test_loc_enlarging_with_dataframe():
-    df = pd.DataFrame({"a": [1, 2, 3]})
-    rhs = pd.DataFrame({"b": [1, 2, 3], "c": [4, 5, 6]})
+    df = DataFrame({"a": [1, 2, 3]})
+    rhs = DataFrame({"b": [1, 2, 3], "c": [4, 5, 6]})
     rhs_orig = rhs.copy()
     df.loc[:, ["b", "c"]] = rhs
     assert np.shares_memory(get_array(df, "b"), get_array(rhs, "b"))

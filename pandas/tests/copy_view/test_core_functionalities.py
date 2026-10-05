@@ -1,13 +1,13 @@
 import numpy as np
 import pytest
 
-import pandas as pd
+from pandas import DataFrame
 import pandas._testing as tm
 from pandas.tests.copy_view.util import get_array
 
 
 def test_assigning_to_same_variable_removes_references():
-    df = pd.DataFrame({"a": [1, 2, 3]})
+    df = DataFrame({"a": [1, 2, 3]})
     df = df.reset_index()
     assert df._mgr._has_no_reference(1)
     arr = get_array(df, "a")
@@ -17,7 +17,7 @@ def test_assigning_to_same_variable_removes_references():
 
 
 def test_setitem_dont_track_unnecessary_references():
-    df = pd.DataFrame({"a": [1, 2, 3], "b": 1, "c": 1})
+    df = DataFrame({"a": [1, 2, 3], "b": 1, "c": 1})
 
     df["b"] = 100
     arr = get_array(df, "a")
@@ -28,7 +28,7 @@ def test_setitem_dont_track_unnecessary_references():
 
 
 def test_setitem_with_view_copies():
-    df = pd.DataFrame({"a": [1, 2, 3], "b": 1, "c": 1})
+    df = DataFrame({"a": [1, 2, 3], "b": 1, "c": 1})
     view = df[:]
     expected = df.copy()
 
@@ -40,7 +40,7 @@ def test_setitem_with_view_copies():
 
 
 def test_setitem_with_view_invalidated_does_not_copy(request):
-    df = pd.DataFrame({"a": [1, 2, 3], "b": 1, "c": 1})
+    df = DataFrame({"a": [1, 2, 3], "b": 1, "c": 1})
     view = df[:]
 
     df["b"] = 100
@@ -60,7 +60,7 @@ def test_setitem_with_view_invalidated_does_not_copy(request):
 
 def test_out_of_scope():
     def func():
-        df = pd.DataFrame({"a": [1, 2], "b": 1.5, "c": 1})
+        df = DataFrame({"a": [1, 2], "b": 1.5, "c": 1})
         # create some subset
         result = df[["a", "b"]]
         return result
@@ -71,7 +71,7 @@ def test_out_of_scope():
 
 
 def test_delete():
-    df = pd.DataFrame(
+    df = DataFrame(
         np.random.default_rng(2).standard_normal((4, 3)), columns=["a", "b", "c"]
     )
     del df["b"]
@@ -83,7 +83,7 @@ def test_delete():
 
 
 def test_delete_reference():
-    df = pd.DataFrame(
+    df = DataFrame(
         np.random.default_rng(2).standard_normal((4, 3)), columns=["a", "b", "c"]
     )
     x = df[:]

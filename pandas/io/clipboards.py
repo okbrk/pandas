@@ -6,22 +6,21 @@ from io import StringIO
 from typing import TYPE_CHECKING
 import warnings
 
-from pandas._config.config import _global_config as config
-
 from pandas._libs import lib
-from pandas.util._decorators import set_module
 from pandas.util._exceptions import find_stack_level
 from pandas.util._validators import check_dtype_backend
 
 from pandas.core.dtypes.generic import ABCDataFrame
 
-from pandas import option_context
+from pandas import (
+    get_option,
+    option_context,
+)
 
 if TYPE_CHECKING:
     from pandas._typing import DtypeBackend
 
 
-@set_module("pandas")
 def read_clipboard(
     sep: str = r"\s+",
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
@@ -90,15 +89,15 @@ def read_clipboard(
 
     # Try to decode (if needed, as "text" might already be a string here).
     try:
-        text = text.decode(kwargs.get("encoding") or config["display"]["encoding"])
+        text = text.decode(kwargs.get("encoding") or get_option("display.encoding"))
     except AttributeError:
         pass
 
     # Excel copies into clipboard with \t separation
-    # inspect no more than the 10 first lines, if they
+    # inspect no more then the 10 first lines, if they
     # all contain an equal number (>0) of tabs, infer
     # that this came from excel and set 'sep' accordingly
-    lines = text[:10000].split("\n")[:-1][:10]  # pyright: ignore[reportOptionalSubscript]
+    lines = text[:10000].split("\n")[:-1][:10]
 
     # Need to remove leading white space, since read_csv
     # accepts:
@@ -168,12 +167,9 @@ def to_clipboard(
         excel = True
 
     if excel:
-        if sep is None:
-            sep = "\t"
-
-        # Validate sep here rather than catching to_csv's TypeError, which would
-        # also blame sep for unrelated failures such as a bad keyword (GH#44120)
-        if isinstance(sep, str) and len(sep) == 1:
+        try:
+            if sep is None:
+                sep = "\t"
             buf = StringIO()
 
             # clipboard_set (pyperclip) expects unicode
@@ -182,11 +178,11 @@ def to_clipboard(
 
             clipboard_set(text)
             return
-
-        warnings.warn(
-            "to_clipboard in excel mode requires a single character separator.",
-            stacklevel=find_stack_level(),
-        )
+        except TypeError:
+            warnings.warn(
+                "to_clipboard in excel mode requires a single character separator.",
+                stacklevel=find_stack_level(),
+            )
     elif sep is not None:
         warnings.warn(
             "to_clipboard with excel=False ignores the sep argument.",

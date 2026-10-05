@@ -34,33 +34,23 @@ def rewrite_exception(old_name: str, new_name: str) -> Generator[None]:
         raise
 
 
-_pkg_dir: str | None = None
-_test_dir: str | None = None
-
-
 def find_stack_level() -> int:
     """
     Find the first place in the stack that is not inside pandas
     (tests notwithstanding).
     """
-    global _pkg_dir, _test_dir
-    if _pkg_dir is None or _test_dir is None:
-        import pandas as pd
 
-        _pkg_dir = os.path.dirname(pd.__file__) + os.sep
-        _test_dir = os.path.join(_pkg_dir, "tests") + os.sep
+    import pandas as pd
 
-    pkg_dir = _pkg_dir
-    test_dir = _test_dir
-    assert pkg_dir is not None
-    assert test_dir is not None
+    pkg_dir = os.path.dirname(pd.__file__)
+    test_dir = os.path.join(pkg_dir, "tests")
 
     # https://stackoverflow.com/questions/17407119/python-inspect-stack-is-slow
     frame: FrameType | None = inspect.currentframe()
     try:
         n = 0
         while frame:
-            filename = frame.f_code.co_filename
+            filename = inspect.getfile(frame)
             if filename.startswith(pkg_dir) and not filename.startswith(test_dir):
                 frame = frame.f_back
                 n += 1

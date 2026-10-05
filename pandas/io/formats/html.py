@@ -12,7 +12,7 @@ from typing import (
     cast,
 )
 
-from pandas._config.config import _global_config as config
+from pandas._config import get_option
 
 from pandas._libs import lib
 
@@ -24,7 +24,6 @@ from pandas import (
 from pandas.io.common import is_url
 from pandas.io.formats.format import (
     DataFrameFormatter,
-    format_name,
     get_level_lengths,
 )
 from pandas.io.formats.printing import pprint_thing
@@ -67,7 +66,7 @@ class HTMLFormatter:
         self.escape = self.fmt.escape
         self.show_dimensions = self.fmt.show_dimensions
         if border is None or border is True:
-            border = cast("int", config["display"]["html"]["border"])
+            border = cast(int, get_option("display.html.border"))
         elif not border:
             border = None
 
@@ -130,7 +129,7 @@ class HTMLFormatter:
         # not showing (row) index
         return 0
 
-    def _get_columns_formatted_values(self) -> Iterable[Hashable]:
+    def _get_columns_formatted_values(self) -> Iterable:
         return self.columns
 
     @property
@@ -196,7 +195,7 @@ class HTMLFormatter:
             esc = {}
 
         rs = pprint_thing(s, escape_chars=esc).strip()
-        # replace spaces between strings with non-breaking spaces
+        # replace spaces betweens strings with non-breaking spaces
         rs = rs.replace("  ", "&nbsp;&nbsp;")
 
         if self.render_links and is_url(rs):
@@ -210,7 +209,7 @@ class HTMLFormatter:
 
     def write_tr(
         self,
-        line: Iterable[Hashable],
+        line: Iterable,
         indent: int = 0,
         indent_delta: int = 0,
         header: bool = False,
@@ -239,10 +238,9 @@ class HTMLFormatter:
 
     def _write_table(self, indent: int = 0) -> None:
         _classes = ["dataframe"]  # Default class.
-        use_mathjax = config["display"]["html"]["use_mathjax"]
+        use_mathjax = get_option("display.html.use_mathjax")
         if not use_mathjax:
             _classes.append("tex2jax_ignore")
-            _classes.append("mathjax_ignore")
         if self.classes is not None:
             if isinstance(self.classes, str):
                 self.classes = self.classes.split()
@@ -290,9 +288,7 @@ class HTMLFormatter:
             levels = self.columns._format_multi(sparsify=sentinel, include_names=False)
             level_lengths = get_level_lengths(levels, sentinel)
             inner_lvl = len(level_lengths) - 1
-            for lnum, (records, values) in enumerate(
-                zip(level_lengths, levels, strict=True)
-            ):
+            for lnum, (records, values) in enumerate(zip(level_lengths, levels)):
                 if is_truncated_horizontally:
                     # modify the header lines
                     ins_col = self.fmt.tr_col_num
@@ -306,16 +302,14 @@ class HTMLFormatter:
                                 recs_new[tag] = span + 1
                                 if lnum == inner_lvl:
                                     values = (
-                                        *values[:ins_col],
-                                        "...",
-                                        *values[ins_col:],
+                                        values[:ins_col] + ("...",) + values[ins_col:]
                                     )
                                 else:
                                     # sparse col headers do not receive a ...
                                     values = (
-                                        *values[:ins_col],
-                                        values[ins_col - 1],
-                                        *values[ins_col:],
+                                        values[:ins_col]
+                                        + (values[ins_col - 1],)
+                                        + values[ins_col:]
                                     )
                             else:
                                 recs_new[tag] = span
@@ -323,7 +317,7 @@ class HTMLFormatter:
                             # get ...
                             if tag + span == ins_col:
                                 recs_new[ins_col] = 1
-                                values = (*values[:ins_col], "...", *values[ins_col:])
+                                values = values[:ins_col] + ("...",) + values[ins_col:]
                         records = recs_new
                         inner_lvl = len(level_lengths) - 1
                         if lnum == inner_lvl:
@@ -337,7 +331,7 @@ class HTMLFormatter:
                                 recs_new[tag] = span
                         recs_new[ins_col] = 1
                         records = recs_new
-                        values = [*values[:ins_col], "...", *values[ins_col:]]
+                        values = values[:ins_col] + ["..."] + values[ins_col:]
 
                 # see gh-22579
                 # Column Offset Bug with to_html(index=False) with
@@ -356,7 +350,7 @@ class HTMLFormatter:
                     # parity with DataFrameFormatter class.
                     if self.fmt.show_index_names:
                         name = self.columns.names[lnum]
-                        row.append(format_name(name))
+                        row.append(pprint_thing(name or ""))
                     else:
                         row.append("")
 
@@ -386,7 +380,7 @@ class HTMLFormatter:
                 # TODO: Refactor to use _get_column_name_list from
                 # DataFrameFormatter class.
                 if self.fmt.show_index_names:
-                    row.append(format_name(self.columns.name))
+                    row.append(self.columns.name or "")
                 else:
                     row.append("")
             row.extend(self._get_columns_formatted_values())
@@ -400,7 +394,7 @@ class HTMLFormatter:
 
     def _write_row_header(self, indent: int) -> None:
         is_truncated_horizontally = self.fmt.is_truncated_horizontally
-        row = [format_name(x) for x in self.frame.index.names] + [""] * (
+        row = [x if x is not None else "" for x in self.frame.index.names] + [""] * (
             self.ncols + (1 if is_truncated_horizontally else 0)
         )
         self.write_tr(row, indent, self.indent_delta, header=True)
@@ -447,7 +441,7 @@ class HTMLFormatter:
                 index_values = self.fmt.tr_frame.index.map(fmt)
             else:
                 # only reached with non-Multi index
-                index_values = self.fmt.tr_frame.index._format_flat(include_name=False)  # type: ignore[assignment]
+                index_values = self.fmt.tr_frame.index._format_flat(include_name=False)
 
         row: list[str] = []
         for i in range(nrows):
@@ -463,7 +457,7 @@ class HTMLFormatter:
 
             row = []
             if self.fmt.index:
-                row.append(index_values[i])  # pyright: ignore[reportArgumentType]
+                row.append(index_values[i])
             # see gh-22579
             # Column misalignment also occurs for
             # a standard index when the columns index is named.
@@ -491,7 +485,7 @@ class HTMLFormatter:
 
         assert isinstance(frame.index, MultiIndex)
         idx_values = frame.index._format_multi(sparsify=False, include_names=False)
-        idx_values = list(zip(*idx_values, strict=True))
+        idx_values = list(zip(*idx_values))
 
         if self.fmt.sparsify:
             # GH3547
@@ -552,7 +546,7 @@ class HTMLFormatter:
 
                 sparse_offset = 0
                 j = 0
-                for records, v in zip(level_lengths, idx_values[i], strict=True):
+                for records, v in zip(level_lengths, idx_values[i]):
                     if i in records:
                         if records[i] > 1:
                             tags[j] = template.format(span=records[i])
@@ -589,10 +583,7 @@ class HTMLFormatter:
                     )
 
                 idx_values = list(
-                    zip(
-                        *frame.index._format_multi(sparsify=False, include_names=False),
-                        strict=True,
-                    )
+                    zip(*frame.index._format_multi(sparsify=False, include_names=False))
                 )
                 row = []
                 row.extend(idx_values[i])

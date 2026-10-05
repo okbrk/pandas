@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-Unwanted patterns test cases that are more complex/impossible to validate via regex.
+Unwanted patterns test cases.
+
+The reason this file exist despite the fact we already have
+`ci/code_checks.sh`,
+(see https://github.com/pandas-dev/pandas/blob/master/ci/code_checks.sh)
+
+is that some of the test cases are more complex/impossible to validate via regex.
+So this file is somewhat an extensions to `ci/code_checks.sh`
 """
 
 import argparse
@@ -9,19 +16,23 @@ from collections.abc import (
     Callable,
     Iterable,
 )
-import re
 import sys
 import token
 import tokenize
 from typing import IO
 
-DEPRECATION_WARNINGS_PATTERN = re.compile(
-    r"(PendingDeprecation|Deprecation|Future)Warning"
-)
 PRIVATE_IMPORTS_TO_IGNORE: set[str] = {
+    "_extension_array_shared_docs",
+    "_index_shared_docs",
+    "_interval_shared_docs",
+    "_merge_doc",
+    "_shared_docs",
     "_new_Index",
     "_new_PeriodIndex",
+    "_pipe_template",
+    "_apply_groupings_depr",
     "__main__",
+    "_transform_template",
     "_get_plot_backend",
     "_matplotlib",
     "_arrow_utils",
@@ -35,7 +46,6 @@ PRIVATE_IMPORTS_TO_IGNORE: set[str] = {
     "_global_config",
     "_chained_assignment_msg",
     "_chained_assignment_method_msg",
-    "_chained_assignment_method_update_msg",
     "_version_meson",
     # The numba extensions need this to mock the iloc object
     "_iLocIndexer",
@@ -43,11 +53,6 @@ PRIVATE_IMPORTS_TO_IGNORE: set[str] = {
     "_get_option",
     "_fill_limit_area_1d",
     "_make_block",
-    "_concatenate_chunks",
-    "_DatetimeTZBlock",
-    "_check_pyarrow_available",
-    "_parser",  # https://github.com/pandas-dev/pandas/issues/60833
-    "_safe_fill_null",
 }
 
 
@@ -174,11 +179,17 @@ def strings_with_wrong_placed_whitespace(
 
     For example:
 
-    >>> rule = "We want the space at the end of the line, not at the beginning"
+    >>> rule = (
+    ...    "We want the space at the end of the line, "
+    ...    "not at the beginning"
+    ... )
 
     Instead of:
 
-    >>> rule = "We want the space at the end of the line, not at the beginning"
+    >>> rule = (
+    ...    "We want the space at the end of the line,"
+    ...    " not at the beginning"
+    ... )
 
     Parameters
     ----------
@@ -214,15 +225,21 @@ def strings_with_wrong_placed_whitespace(
         The unwanted pattern that we are trying to catch is if the spaces in
         a string that is concatenated over multiple lines are placed at the
         end of each string, unless this string is ending with a
-        newline character (\n) or includes a long url link (.html).
+        newline character (\n).
 
         For example, this is bad:
 
-        >>> rule = "We want the space at the end of the line, not at the beginning"
+        >>> rule = (
+        ...    "We want the space at the end of the line,"
+        ...    " not at the beginning"
+        ... )
 
         And what we want is:
 
-        >>> rule = "We want the space at the end of the line, not at the beginning"
+        >>> rule = (
+        ...    "We want the space at the end of the line, "
+        ...    "not at the beginning"
+        ... )
 
         And if the string is ending with a new line character (\n) we
         do not want any trailing whitespaces after it.
@@ -230,20 +247,20 @@ def strings_with_wrong_placed_whitespace(
         For example, this is bad:
 
         >>> rule = (
-        ...     "We want the space at the begging of "
-        ...     "the line if the previous line is ending with a \n "
-        ...     "not at the end, like always"
+        ...    "We want the space at the begging of "
+        ...    "the line if the previous line is ending with a \n "
+        ...    "not at the end, like always"
         ... )
 
         And what we do want is:
 
         >>> rule = (
-        ...     "We want the space at the begging of "
-        ...     "the line if the previous line is ending with a \n"
-        ...     " not at the end, like always"
+        ...    "We want the space at the begging of "
+        ...    "the line if the previous line is ending with a \n"
+        ...    " not at the end, like always"
         ... )
         """
-        if first_line.endswith(r"\n") or ".html" in first_line:
+        if first_line.endswith(r"\n"):
             return False
         elif first_line.startswith("  ") or second_line.startswith("  "):
             return False
@@ -255,9 +272,7 @@ def strings_with_wrong_placed_whitespace(
 
     tokens: list = list(tokenize.generate_tokens(file_obj.readline))
 
-    for first_token, second_token, third_token in zip(
-        tokens, tokens[1:], tokens[2:], strict=False
-    ):
+    for first_token, second_token, third_token in zip(tokens, tokens[1:], tokens[2:]):
         # Checking if we are in a block of concated string
         if (
             first_token.type == third_token.type == token.STRING
@@ -304,14 +319,10 @@ def nodefault_used_not_only_for_typing(file_obj: IO[str]) -> Iterable[tuple[int,
     while nodes:
         in_annotation, node = nodes.pop()
         if not in_annotation and (
-            (
-                isinstance(node, ast.Name)  # Case `NoDefault`
-                and node.id == "NoDefault"
-            )
-            or (
-                isinstance(node, ast.Attribute)  # Cases e.g. `lib.NoDefault`
-                and node.attr == "NoDefault"
-            )
+            isinstance(node, ast.Name)  # Case `NoDefault`
+            and node.id == "NoDefault"
+            or isinstance(node, ast.Attribute)  # Cases e.g. `lib.NoDefault`
+            and node.attr == "NoDefault"
         ):
             yield (node.lineno, "NoDefault is used not only for typing")
 
@@ -333,170 +344,6 @@ def nodefault_used_not_only_for_typing(file_obj: IO[str]) -> Iterable[tuple[int,
                 )
 
 
-def doesnt_use_pandas_warnings(file_obj: IO[str]) -> Iterable[tuple[int, str]]:
-    """
-    Checking that pandas-specific warnings are used for deprecations.
-
-    Parameters
-    ----------
-    file_obj : IO
-        File-like object containing the Python code to validate.
-
-    Yields
-    ------
-    line_number : int
-        Line number of the warning.
-    msg : str
-        Explanation of the error.
-    """
-    contents = file_obj.read()
-    lines = contents.split("\n")
-    tree = ast.parse(contents)
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-
-        if isinstance(node.func, ast.Attribute) and isinstance(
-            node.func.value, ast.Name
-        ):
-            # Check for `warnings.warn`.
-            if node.func.value.id != "warnings" or node.func.attr != "warn":
-                continue
-        elif isinstance(node.func, ast.Name):
-            # Check for just `warn` when using `from warnings import warn`.
-            if node.func.id != "warn":
-                continue
-        if any(
-            "# pdlint: ignore[warning_class]" in lines[k]
-            for k in range(node.lineno - 1, node.end_lineno + 1)
-        ):
-            continue
-        values = [arg.id for arg in node.args if isinstance(arg, ast.Name)] + [
-            kw.value.id for kw in node.keywords if kw.arg == "category"
-        ]
-        for value in values:
-            matches = re.match(DEPRECATION_WARNINGS_PATTERN, value)
-            if matches is not None:
-                yield (
-                    node.lineno,
-                    f"Don't use {matches[0]}, use a pandas-specific warning in "
-                    f"pd.errors instead. You can add "
-                    f"`# pdlint: ignore[warning_class]` to override.",
-                )
-
-
-MESSAGE_REGEX_VARIABLE_NAMES = frozenset({"msg", "pat"})
-
-BARE_PIPE_MESSAGE = (
-    "Bare top-level '|' in a message regex; use '|'.join([...]) to list "
-    "alternative messages, or group an inline alternation like '(a|b)'."
-)
-
-
-def _message_regex_source(node: ast.AST) -> str | None:
-    """Return the (approximate) regex source for a string-literal node.
-
-    Adjacent string literals are already concatenated by the parser. For an
-    f-string each substitution is treated as opaque placeholder text, so a bare
-    ``f"{a}|{b}"`` is still detected while the contents of ``{...}`` are not
-    interpreted as regex syntax. Returns ``None`` for anything that is not a
-    string literal (e.g. a ``"|".join([...])`` call or a plain name).
-    """
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.JoinedStr):
-        parts = []
-        for value in node.values:
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                parts.append(value.value)
-            else:
-                parts.append("\x00")  # opaque placeholder for a {substitution}
-        return "".join(parts)
-    return None
-
-
-def _has_top_level_pipe(regex: str) -> bool:
-    """Whether ``regex`` contains a ``|`` at the top level.
-
-    A top-level ``|`` is one that is not backslash-escaped, not inside a
-    ``(...)`` group, and not inside a ``[...]`` character class -- i.e. a real
-    alternation between separate messages rather than an inline ``(a|b)``.
-    """
-    depth = 0
-    in_character_class = False
-    index = 0
-    while index < len(regex):
-        char = regex[index]
-        if char == "\\":
-            index += 2
-            continue
-        if in_character_class:
-            if char == "]":
-                in_character_class = False
-        elif char == "[":
-            in_character_class = True
-        elif char == "(":
-            depth += 1
-        elif char == ")":
-            depth = max(0, depth - 1)
-        elif char == "|" and depth == 0:
-            return True
-        index += 1
-    return False
-
-
-def bare_pipe_alternation_in_message(file_obj: IO[str]) -> Iterable[tuple[int, str]]:
-    """
-    Check that exception/warning message regexes don't use a bare ``|``.
-
-    When a test matches one of several possible messages, the alternatives
-    should be joined explicitly so the list stays readable::
-
-        msg = "|".join(["first message", "second message"])
-        with pytest.raises(ValueError, match=msg):
-            ...
-
-    rather than hiding the alternation inside a single literal
-    (``"first message|second message"``). An alternation that is genuinely part
-    of one message should instead be grouped, e.g. ``"cannot (add|subtract)"``.
-
-    This applies to ``msg``/``pat`` assignments and to ``match=`` arguments.
-
-    Parameters
-    ----------
-    file_obj : IO
-        File-like object containing the Python code to validate.
-
-    Yields
-    ------
-    line_number : int
-        Line number of the offending message regex.
-    msg : str
-        Explanation of the error.
-    """
-    contents = file_obj.read()
-    tree = ast.parse(contents)
-
-    for node in ast.walk(tree):
-        candidates: list[ast.AST] = []
-        if isinstance(node, ast.Assign):
-            if any(
-                isinstance(target, ast.Name)
-                and target.id in MESSAGE_REGEX_VARIABLE_NAMES
-                for target in node.targets
-            ):
-                candidates.append(node.value)
-        elif isinstance(node, ast.Call):
-            candidates.extend(
-                keyword.value for keyword in node.keywords if keyword.arg == "match"
-            )
-
-        for value in candidates:
-            regex = _message_regex_source(value)
-            if regex is not None and _has_top_level_pipe(regex):
-                yield (value.lineno, BARE_PIPE_MESSAGE)
-
-
 def main(
     function: Callable[[IO[str]], Iterable[tuple[int, str]]],
     source_path: str,
@@ -513,6 +360,10 @@ def main(
         Source path representing path to a file/directory.
     output_format : str
         Output format of the error message.
+    file_extensions_to_check : str
+        Comma separated values of what file extensions to check.
+    excluded_file_paths : str
+        Comma separated values of what file paths to exclude during the check.
 
     Returns
     -------
@@ -545,8 +396,6 @@ if __name__ == "__main__":
         "private_import_across_module",
         "strings_with_wrong_placed_whitespace",
         "nodefault_used_not_only_for_typing",
-        "doesnt_use_pandas_warnings",
-        "bare_pipe_alternation_in_message",
     ]
 
     parser = argparse.ArgumentParser(description="Unwanted patterns checker.")

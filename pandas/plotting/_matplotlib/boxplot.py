@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import (
     TYPE_CHECKING,
-    Any,
     Literal,
     NamedTuple,
 )
@@ -54,7 +53,8 @@ def _set_ticklabels(ax: Axes, labels: list[str], is_vertical: bool, **kwargs) ->
     """
     ticks = ax.get_xticks() if is_vertical else ax.get_yticks()
     if len(ticks) != len(labels):
-        i, _ = divmod(len(ticks), len(labels))
+        i, remainder = divmod(len(ticks), len(labels))
+        assert remainder == 0, remainder
         labels *= i
     if is_vertical:
         ax.set_xticklabels(labels, **kwargs)
@@ -121,7 +121,8 @@ class BoxPlot(LinePlot):
 
         if colormap is not None:
             warnings.warn(
-                "'color' and 'colormap' cannot be used simultaneously. Using 'color'",
+                "'color' and 'colormap' cannot be used "
+                "simultaneously. Using 'color'",
                 stacklevel=find_stack_level(),
             )
 
@@ -188,8 +189,7 @@ class BoxPlot(LinePlot):
 
     def _make_plot(self, fig: Figure) -> None:
         if self.subplots:
-            obj_axes = []
-            obj_labels = []
+            self._return_obj = pd.Series(dtype=object)
 
             # Re-create iterated data if `by` is assigned by users
             data = (
@@ -220,12 +220,10 @@ class BoxPlot(LinePlot):
                     ax, y, column_num=i, return_type=self.return_type, **kwds
                 )
                 self.maybe_color_bp(bp)
-                obj_axes.append(ret)
-                obj_labels.append(label)
+                self._return_obj[label] = ret
                 _set_ticklabels(
                     ax=ax, labels=ticklabels, is_vertical=self.orientation == "vertical"
                 )
-            self._return_obj = pd.Series(obj_axes, index=obj_labels, dtype=object)
         else:
             y = self.data.values.T
             ax = self._get_ax(0)
@@ -319,9 +317,9 @@ def _grouped_plot_by_column(
 
     ax_values = []
 
-    for ax, col in zip(flatten_axes(axes), columns, strict=False):
+    for ax, col in zip(flatten_axes(axes), columns):
         gp_col = grouped[col]
-        keys, values = zip(*gp_col, strict=True)
+        keys, values = zip(*gp_col)
         re_plotf = plotf(keys, values, ax, xlabel=xlabel, ylabel=ylabel, **kwargs)
         ax.set_title(col)
         ax_values.append(re_plotf)
@@ -333,7 +331,7 @@ def _grouped_plot_by_column(
     if return_type is None:
         result = axes
 
-    byline = by[0] if len(by) == 1 else by  # pyright: ignore[reportOptionalSubscript]
+    byline = by[0] if len(by) == 1 else by
     fig.suptitle(f"Boxplot grouped by {byline}")
     maybe_adjust_figure(fig, bottom=0.15, top=0.9, left=0.1, right=0.9, wspace=0.2)
 
@@ -378,7 +376,7 @@ def boxplot(
                 # taken from the colors dict parameter
                 # "boxes" value placed in position 0, "whiskers" in 1, etc.
                 valid_keys = ["boxes", "whiskers", "medians", "caps"]
-                key_to_index = dict(zip(valid_keys, range(4), strict=True))
+                key_to_index = dict(zip(valid_keys, range(4)))
                 for key, value in colors.items():
                     if key in valid_keys:
                         result[key_to_index[key]] = value
@@ -401,7 +399,7 @@ def boxplot(
             ax.set_ylabel(pprint_thing(ylabel))
 
         keys = [pprint_thing(x) for x in keys]
-        values = [remove_na_arraylike(v) for v in values]
+        values = [np.asarray(remove_na_arraylike(v), dtype=object) for v in values]
         bp = ax.boxplot(values, **kwds)
         if fontsize is not None:
             ax.tick_params(axis="both", labelsize=fontsize)
@@ -450,8 +448,7 @@ def boxplot(
             raise ValueError("The 'layout' keyword is not supported when 'by' is None")
 
         if ax is None:
-            # Any: rc_context's accepted key type narrowed in matplotlib 3.11
-            rc: Any = {"figure.figsize": figsize} if figsize is not None else {}
+            rc = {"figure.figsize": figsize} if figsize is not None else {}
             with mpl.rc_context(rc):
                 ax = plt.gca()
         data = data._get_numeric_data()
@@ -529,7 +526,7 @@ def boxplot_frame_groupby(
             layout=layout,
         )
         data = {}
-        for (key, group), ax in zip(grouped, flatten_axes(axes), strict=False):
+        for (key, group), ax in zip(grouped, flatten_axes(axes)):
             d = group.boxplot(
                 ax=ax, column=column, fontsize=fontsize, rot=rot, grid=grid, **kwds
             )
@@ -538,7 +535,7 @@ def boxplot_frame_groupby(
         ret = pd.Series(data)
         maybe_adjust_figure(fig, bottom=0.15, top=0.9, left=0.1, right=0.9, wspace=0.2)
     else:
-        keys, frames = zip(*grouped, strict=True)
+        keys, frames = zip(*grouped)
         df = pd.concat(frames, keys=keys, axis=1)
 
         # GH 16748, DataFrameGroupby fails when subplots=False and `column` argument

@@ -1,21 +1,14 @@
-from collections.abc import Mapping
-from typing import Any
+from typing import Mapping
 
-import numpy as np
-
-from pandas import Index
-
-def assert_dict_equal(
-    a: Mapping[Any, Any], b: Mapping[Any, Any], compare_keys: bool = ...
-) -> bool: ...
+def assert_dict_equal(a: Mapping, b: Mapping, compare_keys: bool = ...) -> bool: ...
 def assert_almost_equal(
-    a: object,
-    b: object,
+    a,
+    b,
     rtol: float = ...,
     atol: float = ...,
     check_dtype: bool = ...,
-    obj: object = ...,
-    lobj: object = ...,
-    robj: object = ...,
-    index_values: Index | np.ndarray | None = ...,
+    obj=...,
+    lobj=...,
+    robj=...,
+    index_values=...,
 ) -> bool: ...

@@ -4,10 +4,13 @@ Implementation of nlargest and nsmallest.
 
 from __future__ import annotations
 
+from collections.abc import (
+    Hashable,
+    Sequence,
+)
 from typing import (
     TYPE_CHECKING,
     Generic,
-    Literal,
     cast,
     final,
 )
@@ -29,11 +32,6 @@ from pandas.core.dtypes.dtypes import BaseMaskedDtype
 from pandas.core.indexes.api import default_index
 
 if TYPE_CHECKING:
-    from collections.abc import (
-        Hashable,
-        Sequence,
-    )
-
     from pandas._typing import (
         DtypeObj,
         IndexLabel,
@@ -56,9 +54,7 @@ else:
 
 
 class SelectN(Generic[NDFrameT]):
-    def __init__(
-        self, obj: NDFrameT, n: int, keep: Literal["first", "last", "all"]
-    ) -> None:
+    def __init__(self, obj: NDFrameT, n: int, keep: str) -> None:
         self.obj = obj
         self.n = n
         self.keep = keep
@@ -115,25 +111,15 @@ class SelectNSeries(SelectN[Series]):
         if n <= 0:
             return self.obj[[]]
 
-        # Save index and reset to default index to avoid performance impact
-        # from when index contains duplicates
-        original_index: Index = self.obj.index
-        default_index = self.obj.reset_index(drop=True)
+        dropped = self.obj.dropna()
+        nan_index = self.obj.drop(dropped.index)
 
-        # Slower method used when taking the full length of the series
-        # In this case, it is equivalent to a sort.
-        if n >= len(default_index):
+        # slow method
+        if n >= len(self.obj):
             ascending = method == "nsmallest"
-            result = default_index.sort_values(ascending=ascending, kind="stable").head(
-                n
-            )
-            result.index = original_index.take(result.index)  # type: ignore[arg-type]
-            return result
+            return self.obj.sort_values(ascending=ascending).head(n)
 
-        # Fast method used in the general case
-        dropped = default_index.dropna()
-        nan_index = default_index.drop(dropped.index)
-
+        # fast method
         new_dtype = dropped.dtype
 
         # Similar to algorithms._ensure_data
@@ -172,23 +158,22 @@ class SelectNSeries(SelectN[Series]):
         else:
             kth_val = np.nan
         (ns,) = np.nonzero(arr <= kth_val)
-        inds = ns[arr[ns].argsort(kind="stable")]
+        inds = ns[arr[ns].argsort(kind="mergesort")]
 
         if self.keep != "all":
             inds = inds[:n]
             findex = nbase
-        elif len(inds) < nbase <= len(nan_index) + len(inds):
-            findex = len(nan_index) + len(inds)
         else:
-            findex = len(inds)
+            if len(inds) < nbase <= len(nan_index) + len(inds):
+                findex = len(nan_index) + len(inds)
+            else:
+                findex = len(inds)
 
         if self.keep == "last":
             # reverse indices
             inds = narr - 1 - inds
 
-        result = concat([dropped.iloc[inds], nan_index]).iloc[:findex]
-        result.index = original_index.take(result.index)
-        return result
+        return concat([dropped.iloc[inds], nan_index]).iloc[:findex]
 
 
 class SelectNFrame(SelectN[DataFrame]):
@@ -207,18 +192,12 @@ class SelectNFrame(SelectN[DataFrame]):
     nordered : DataFrame
     """
 
-    def __init__(
-        self,
-        obj: DataFrame,
-        n: int,
-        keep: Literal["first", "last", "all"],
-        columns: IndexLabel,
-    ) -> None:
+    def __init__(self, obj: DataFrame, n: int, keep: str, columns: IndexLabel) -> None:
         super().__init__(obj, n, keep)
         if not is_list_like(columns) or isinstance(columns, tuple):
             columns = [columns]
 
-        columns = cast("Sequence[Hashable]", columns)
+        columns = cast(Sequence[Hashable], columns)
         columns = list(columns)
         self.columns = columns
 
@@ -290,7 +269,7 @@ class SelectNFrame(SelectN[DataFrame]):
         frame = frame.take(indexer)
 
         # Restore the index on frame
-        frame.index = original_index.take(indexer)  # type: ignore[arg-type]
+        frame.index = original_index.take(indexer)
 
         # If there is only one column, the frame is already sorted.
         if len(columns) == 1:
@@ -298,4 +277,4 @@ class SelectNFrame(SelectN[DataFrame]):
 
         ascending = method == "nsmallest"
 
-        return frame.sort_values(columns, ascending=ascending, kind="stable")
+        return frame.sort_values(columns, ascending=ascending, kind="mergesort")

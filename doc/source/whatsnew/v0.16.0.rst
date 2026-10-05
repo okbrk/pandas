@@ -51,51 +51,32 @@ to be inserted (for example, a ``Series`` or NumPy array), or a function
 of one argument to be called on the ``DataFrame``. The new values are inserted,
 and the entire DataFrame (with all original and new columns) is returned.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> iris = pd.read_csv('data/iris.data')
-   >>> iris.head()
-      SepalLength  SepalWidth  PetalLength  PetalWidth         Name
-   0          5.1         3.5          1.4         0.2  Iris-setosa
-   1          4.9         3.0          1.4         0.2  Iris-setosa
-   2          4.7         3.2          1.3         0.2  Iris-setosa
-   3          4.6         3.1          1.5         0.2  Iris-setosa
-   4          5.0         3.6          1.4         0.2  Iris-setosa
+   iris = pd.read_csv('data/iris.data')
+   iris.head()
 
-   >>> iris.assign(sepal_ratio=iris['SepalWidth'] / iris['SepalLength']).head()
-      SepalLength  SepalWidth  PetalLength  PetalWidth         Name  sepal_ratio
-   0          5.1         3.5          1.4         0.2  Iris-setosa     0.686275
-   1          4.9         3.0          1.4         0.2  Iris-setosa     0.612245
-   2          4.7         3.2          1.3         0.2  Iris-setosa     0.680851
-   3          4.6         3.1          1.5         0.2  Iris-setosa     0.673913
-   4          5.0         3.6          1.4         0.2  Iris-setosa     0.720000
+   iris.assign(sepal_ratio=iris['SepalWidth'] / iris['SepalLength']).head()
 
 Above was an example of inserting a precomputed value. We can also pass in
 a function to be evaluated.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> iris.assign(sepal_ratio=lambda x: (x['SepalWidth']
-   ...                                    / x['SepalLength'])).head()
-      SepalLength  SepalWidth  PetalLength  PetalWidth         Name  sepal_ratio
-   0          5.1         3.5          1.4         0.2  Iris-setosa     0.686275
-   1          4.9         3.0          1.4         0.2  Iris-setosa     0.612245
-   2          4.7         3.2          1.3         0.2  Iris-setosa     0.680851
-   3          4.6         3.1          1.5         0.2  Iris-setosa     0.673913
-   4          5.0         3.6          1.4         0.2  Iris-setosa     0.720000
+    iris.assign(sepal_ratio=lambda x: (x['SepalWidth']
+                                       / x['SepalLength'])).head()
 
 The power of ``assign`` comes when used in chains of operations. For example,
 we can limit the DataFrame to just those with a Sepal Length greater than 5,
 calculate the ratio, and plot
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> iris = pd.read_csv('data/iris.data')
-   >>> (iris.query('SepalLength > 5')
-   ...      .assign(SepalRatio=lambda x: x.SepalWidth / x.SepalLength,
-   ...              PetalRatio=lambda x: x.PetalWidth / x.PetalLength)
-   ...      .plot(kind='scatter', x='SepalRatio', y='PetalRatio'))
-   <Axes: xlabel='SepalRatio', ylabel='PetalRatio'>
+   iris = pd.read_csv('data/iris.data')
+   (iris.query('SepalLength > 5')
+        .assign(SepalRatio=lambda x: x.SepalWidth / x.SepalLength,
+                PetalRatio=lambda x: x.PetalWidth / x.PetalLength)
+        .plot(kind='scatter', x='SepalRatio', y='PetalRatio'))
 
 .. image:: ../_static/whatsnew_assign.png
   :scale: 50 %
@@ -108,7 +89,7 @@ See the :ref:`documentation <dsintro.chained_assignment>` for more. (:issue:`922
 Interaction with scipy.sparse
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Added ``SparseSeries.to_coo`` and ``SparseSeries.from_coo`` methods (:issue:`8048`) for converting to and from ``scipy.sparse.coo_matrix`` instances (see :ref:`here <sparse.scipysparse>`). For example, given a SparseSeries with MultiIndex we can convert to a ``scipy.sparse.coo_matrix`` by specifying the row and column labels as index levels:
+Added :meth:`SparseSeries.to_coo` and :meth:`SparseSeries.from_coo` methods (:issue:`8048`) for converting to and from ``scipy.sparse.coo_matrix`` instances (see :ref:`here <sparse.scipysparse>`). For example, given a SparseSeries with MultiIndex we can convert to a ``scipy.sparse.coo_matrix`` by specifying the row and column labels as index levels:
 
 .. code-block:: python
 
@@ -165,47 +146,27 @@ String methods enhancements
   ``find()``     ``rfind()``    ``ljust()``    ``rjust()``        ``zfill()``
   =============  =============  =============  ===============    ===============
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> s = pd.Series(['abcd', '3456', 'EFGH'])
-     >>> s.str.isalpha()
-     0     True
-     1    False
-     2     True
-     dtype: bool
-     >>> s.str.find('ab')
-     0    0
-     1   -1
-     2   -1
-     dtype: int64
+     s = pd.Series(['abcd', '3456', 'EFGH'])
+     s.str.isalpha()
+     s.str.find('ab')
 
 - :meth:`Series.str.pad` and :meth:`Series.str.center` now accept ``fillchar`` option to specify filling character (:issue:`9352`)
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> s = pd.Series(['12', '300', '25'])
-     >>> s.str.pad(5, fillchar='_')
-     0    ___12
-     1    __300
-     2    ___25
-     dtype: str
+     s = pd.Series(['12', '300', '25'])
+     s.str.pad(5, fillchar='_')
 
 - Added :meth:`Series.str.slice_replace`, which previously raised ``NotImplementedError`` (:issue:`8888`)
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> s = pd.Series(['ABCD', 'EFGH', 'IJK'])
-     >>> s.str.slice_replace(1, 3, 'X')
-     0    AXD
-     1    EXH
-     2     IX
-     dtype: str
+     s = pd.Series(['ABCD', 'EFGH', 'IJK'])
+     s.str.slice_replace(1, 3, 'X')
      # replaced with empty char
-     >>> s.str.slice_replace(0, 1)
-     0    BCD
-     1    FGH
-     2     JK
-     dtype: str
+     s.str.slice_replace(0, 1)
 
 .. _whatsnew_0160.enhancements.other:
 
@@ -214,14 +175,10 @@ Other enhancements
 
 - Reindex now supports ``method='nearest'`` for frames or series with a monotonic increasing or decreasing index (:issue:`9258`):
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> df = pd.DataFrame({'x': range(5)})
-     >>> df.reindex([0.2, 1.8, 3.5], method='nearest')
-          x
-     0.2  0
-     1.8  2
-     3.5  4
+     df = pd.DataFrame({'x': range(5)})
+     df.reindex([0.2, 1.8, 3.5], method='nearest')
 
   This method is also exposed by the lower level ``Index.get_indexer`` and ``Index.get_loc`` methods.
 
@@ -286,24 +243,19 @@ Previous behavior
 
 New behavior
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> t = pd.Timedelta('1 day, 10:11:12.100123')
-   >>> t.days
-   1
-   >>> t.seconds
-   36672
-   >>> t.microseconds
-   100123
+   t = pd.Timedelta('1 day, 10:11:12.100123')
+   t.days
+   t.seconds
+   t.microseconds
 
 Using ``.components`` allows the full component access
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> t.components
-   Components(days=1, hours=10, minutes=11, seconds=12, milliseconds=100, microseconds=123, nanoseconds=0)
-   >>> t.components.seconds
-   12
+   t.components
+   t.components.seconds
 
 .. _whatsnew_0160.api_breaking.indexing:
 
@@ -314,26 +266,14 @@ The behavior of a small sub-set of edge cases for using ``.loc`` have changed (:
 
 - Slicing with ``.loc`` where the start and/or stop bound is not found in the index is now allowed; this previously would raise a ``KeyError``. This makes the behavior the same as ``.ix`` in this case. This change is only for slicing, not when indexing with a single label.
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> df = pd.DataFrame(np.random.randn(5, 4),
-     ...                   columns=list('ABCD'),
-     ...                   index=pd.date_range('20130101', periods=5))
-     >>> df
-                        A         B         C         D
-     2013-01-01  0.469112 -0.282863 -1.509059 -1.135632
-     2013-01-02  1.212112 -0.173215  0.119209 -1.044236
-     2013-01-03 -0.861849 -2.104569 -0.494929  1.071804
-     2013-01-04  0.721555 -0.706771 -1.039575  0.271860
-     2013-01-05 -0.424972  0.567020  0.276232 -1.087401
-     >>> s = pd.Series(range(5), [-2, -1, 1, 2, 3])
-     >>> s
-     -2    0
-     -1    1
-      1    2
-      2    3
-      3    4
-     dtype: int64
+     df = pd.DataFrame(np.random.randn(5, 4),
+                       columns=list('ABCD'),
+                       index=pd.date_range('20130101', periods=5))
+     df
+     s = pd.Series(range(5), [-2, -1, 1, 2, 3])
+     s
 
   Previous behavior
 
@@ -347,21 +287,10 @@ The behavior of a small sub-set of edge cases for using ``.loc`` have changed (:
 
   New behavior
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> df.loc['2013-01-02':'2013-01-10']
-                        A         B         C         D
-     2013-01-02  1.212112 -0.173215  0.119209 -1.044236
-     2013-01-03 -0.861849 -2.104569 -0.494929  1.071804
-     2013-01-04  0.721555 -0.706771 -1.039575  0.271860
-     2013-01-05 -0.424972  0.567020  0.276232 -1.087401
-     >>> s.loc[-10:3]
-     -2    0
-     -1    1
-      1    2
-      2    3
-      3    4
-     dtype: int64
+     df.loc['2013-01-02':'2013-01-10']
+     s.loc[-10:3]
 
 - Allow slicing with float-like values on an integer index for ``.ix``. Previously this was only enabled for ``.loc``:
 
@@ -438,37 +367,19 @@ Previous behavior
 
 New behavior
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> s = pd.Series([0, 1, 2], dtype='category')
-   >>> s
-   0    0
-   1    1
-   2    2
-   dtype: category
-   Categories (3, int64): [0, 1, 2]
-   >>> s.cat.ordered
-   False
-   >>> s = s.cat.as_ordered()
-   >>> s
-   0    0
-   1    1
-   2    2
-   dtype: category
-   Categories (3, int64): [0 < 1 < 2]
-   >>> s.cat.ordered
-   True
+   s = pd.Series([0, 1, 2], dtype='category')
+   s
+   s.cat.ordered
+   s = s.cat.as_ordered()
+   s
+   s.cat.ordered
 
    # you can set in the constructor of the Categorical
-   >>> s = pd.Series(pd.Categorical([0, 1, 2], ordered=True))
-   >>> s
-   0    0
-   1    1
-   2    2
-   dtype: category
-   Categories (3, int64): [0 < 1 < 2]
-   >>> s.cat.ordered
-   True
+   s = pd.Series(pd.Categorical([0, 1, 2], ordered=True))
+   s
+   s.cat.ordered
 
 For ease of creation of series of categorical data, we have added the ability to pass keywords when calling ``.astype()``. These are passed directly to the constructor.
 
@@ -580,17 +491,11 @@ Other API changes
 
   New behavior
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> p = pd.Series([0, 1])
-     >>> p / 0
-     0    NaN
-     1    inf
-     dtype: float64
-     >>> p // 0
-     0    NaN
-     1    inf
-     dtype: float64
+     p = pd.Series([0, 1])
+     p / 0
+     p // 0
 
 - ``Series.values_counts`` and ``Series.describe`` for categorical data will now put ``NaN`` entries at the end. (:issue:`9443`)
 - ``Series.describe`` for categorical data will now give counts and frequencies of 0, not ``NaN``, for unused categories (:issue:`9443`)
@@ -606,10 +511,9 @@ Other API changes
 
   Fixed behavior:
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> pd.to_datetime(['2000-01-31', '2000-02-28']).asof('2000-02')
-     Timestamp('2000-02-28 00:00:00')
+    pd.to_datetime(['2000-01-31', '2000-02-28']).asof('2000-02')
 
   To reproduce the old behavior, simply add more precision to the label (e.g., use ``2000-02-01`` instead of ``2000-02``).
 
@@ -708,7 +612,7 @@ Bug fixes
 - Bug in groupby ``.nth()`` with a multiple column groupby (:issue:`8979`)
 - Bug in ``DataFrame.where`` and ``Series.where`` coerce numerics to string incorrectly (:issue:`9280`)
 - Bug in ``DataFrame.where`` and ``Series.where`` raise ``ValueError`` when string list-like is passed. (:issue:`9280`)
-- Accessing ``Series.str`` methods with non-string values now raises ``TypeError`` instead of producing incorrect results (:issue:`9184`)
+- Accessing ``Series.str`` methods on with non-string values now raises ``TypeError`` instead of producing incorrect results (:issue:`9184`)
 - Bug in ``DatetimeIndex.__contains__`` when index has duplicates and is not monotonic increasing (:issue:`9512`)
 - Fixed division by zero error for ``Series.kurt()`` when all values are equal (:issue:`9197`)
 - Fixed issue in the ``xlsxwriter`` engine where it added a default 'General' format to cells if no other format was applied. This prevented other row or column formatting being applied. (:issue:`9167`)
@@ -770,12 +674,12 @@ Bug fixes
 
   The following would previously report a ``SettingWithCopy`` Warning.
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> df1 = pd.DataFrame({'x': pd.Series(['a', 'b', 'c']),
-     ...                     'y': pd.Series(['d', 'e', 'f'])})
-     >>> df2 = df1[['x']]
-     >>> df2['y'] = ['g', 'h', 'i']
+     df1 = pd.DataFrame({'x': pd.Series(['a', 'b', 'c']),
+                         'y': pd.Series(['d', 'e', 'f'])})
+     df2 = df1[['x']]
+     df2['y'] = ['g', 'h', 'i']
 
 
 .. _whatsnew_0.16.0.contributors:

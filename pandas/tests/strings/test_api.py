@@ -3,8 +3,15 @@ import weakref
 import numpy as np
 import pytest
 
-import pandas as pd
-import pandas._testing as tm
+from pandas import (
+    CategoricalDtype,
+    DataFrame,
+    Index,
+    MultiIndex,
+    Series,
+    _testing as tm,
+    option_context,
+)
 from pandas.core.strings.accessor import StringMethods
 
 # subset of the full set from pandas/conftest.py
@@ -15,9 +22,7 @@ _any_allowed_skipna_inferred_dtype = [
     ("empty", []),
     ("mixed-integer", ["a", np.nan, 2]),
 ]
-ids, _ = zip(
-    *_any_allowed_skipna_inferred_dtype, strict=True
-)  # use inferred type as id
+ids, _ = zip(*_any_allowed_skipna_inferred_dtype)  # use inferred type as id
 
 
 @pytest.fixture(params=_any_allowed_skipna_inferred_dtype, ids=ids)
@@ -61,13 +66,13 @@ def any_allowed_skipna_inferred_dtype(request):
 
 def test_api(any_string_dtype):
     # GH 6106, GH 9322
-    assert pd.Series.str is StringMethods
-    assert isinstance(pd.Series([""], dtype=any_string_dtype).str, StringMethods)
+    assert Series.str is StringMethods
+    assert isinstance(Series([""], dtype=any_string_dtype).str, StringMethods)
 
 
 def test_no_circular_reference(any_string_dtype):
     # GH 47667
-    ser = pd.Series([""], dtype=any_string_dtype)
+    ser = Series([""], dtype=any_string_dtype)
     ref = weakref.ref(ser)
     ser.str  # Used to cache and cause circular reference
     del ser
@@ -76,7 +81,7 @@ def test_no_circular_reference(any_string_dtype):
 
 def test_api_mi_raises():
     # GH 23679
-    mi = pd.MultiIndex.from_arrays([["a", "b", "c"]])
+    mi = MultiIndex.from_arrays([["a", "b", "c"]])
     msg = "Can only use .str accessor with Index, not MultiIndex"
     with pytest.raises(AttributeError, match=msg):
         mi.str
@@ -129,7 +134,7 @@ def test_api_per_method(
     method_name, args, kwargs = any_string_method
 
     reason = None
-    if box is pd.Index and values.size == 0:
+    if box is Index and values.size == 0:
         if method_name in ["partition", "rpartition"] and kwargs.get("expand", True):
             raises = TypeError
             reason = "Method cannot deal with empty Index"
@@ -141,7 +146,7 @@ def test_api_per_method(
             reason = "Need to fortify get_dummies corner cases"
 
     elif (
-        box is pd.Index
+        box is Index
         and inferred_dtype == "empty"
         and dtype == object
         and method_name == "get_dummies"
@@ -176,17 +181,14 @@ def test_api_per_method(
 
     if inferred_dtype in allowed_types:
         # xref GH 23555, GH 23556
-        method(*args, **kwargs)  # works!
+        with option_context("future.no_silent_downcasting", True):
+            method(*args, **kwargs)  # works!
     else:
         # GH 23011, GH 23163
-        msg = "|".join(
-            [
-                (
-                    f"Cannot use .str.{method_name} with values of "
-                    f"inferred dtype {inferred_dtype!r}."
-                ),
-                "a bytes-like object is required, not 'str'",
-            ]
+        msg = (
+            f"Cannot use .str.{method_name} with values of "
+            f"inferred dtype {inferred_dtype!r}."
+            "|a bytes-like object is required, not 'str'"
         )
         with pytest.raises(TypeError, match=msg):
             method(*args, **kwargs)
@@ -194,10 +196,10 @@ def test_api_per_method(
 
 def test_api_for_categorical(any_string_method, any_string_dtype):
     # https://github.com/pandas-dev/pandas/issues/10661
-    s = pd.Series(list("aabb"), dtype=any_string_dtype)
+    s = Series(list("aabb"), dtype=any_string_dtype)
     s = s + " " + s
     c = s.astype("category")
-    c = c.astype(pd.CategoricalDtype(c.dtype.categories.astype("object")))
+    c = c.astype(CategoricalDtype(c.dtype.categories.astype("object")))
     assert isinstance(c.str, StringMethods)
 
     method_name, args, kwargs = any_string_method
@@ -205,9 +207,9 @@ def test_api_for_categorical(any_string_method, any_string_dtype):
     result = getattr(c.str, method_name)(*args, **kwargs)
     expected = getattr(s.astype("object").str, method_name)(*args, **kwargs)
 
-    if isinstance(result, pd.DataFrame):
+    if isinstance(result, DataFrame):
         tm.assert_frame_equal(result, expected)
-    elif isinstance(result, pd.Series):
+    elif isinstance(result, Series):
         tm.assert_series_equal(result, expected)
     else:
         # str.cat(others=None) returns string, for example

@@ -132,13 +132,13 @@ it is necessary to provide ``mode="wb"``.
 
 For example:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> import io
+   import io
 
-   >>> data = pd.DataFrame([0, 1, 2])
-   >>> buffer = io.BytesIO()
-   >>> data.to_csv(buffer, encoding="utf-8", compression="gzip")
+   data = pd.DataFrame([0, 1, 2])
+   buffer = io.BytesIO()
+   data.to_csv(buffer, encoding="utf-8", compression="gzip")
 
 Support for short caption and table position in ``to_latex``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -149,45 +149,24 @@ and a short caption (:issue:`36267`).
 
 The keyword ``position`` has been added to set the position.
 
-.. code-block:: pycon
+.. ipython:: python
+   :okwarning:
 
-   >>> data = pd.DataFrame({'a': [1, 2], 'b': [3, 4]})
-   >>> table = data.to_latex(position='ht')
-   >>> print(table)
-   \begin{table}[ht]
-   \centering
-   \begin{tabular}{lrr}
-   \toprule
-   {} &  a &  b \\
-   \midrule
-   0 &  1 &  3 \\
-   1 &  2 &  4 \\
-   \bottomrule
-   \end{tabular}
-   \end{table}
+   data = pd.DataFrame({'a': [1, 2], 'b': [3, 4]})
+   table = data.to_latex(position='ht')
+   print(table)
 
 Usage of the keyword ``caption`` has been extended.
 Besides taking a single string as an argument,
 one can optionally provide a tuple ``(full_caption, short_caption)``
 to add a short caption macro.
 
-.. code-block:: pycon
+.. ipython:: python
+   :okwarning:
 
-   >>> data = pd.DataFrame({'a': [1, 2], 'b': [3, 4]})
-   >>> table = data.to_latex(caption=('the full long caption', 'short caption'))
-   >>> print(table)
-   \begin{table}
-   \centering
-   \caption[short caption]{the full long caption}
-   \begin{tabular}{lrr}
-   \toprule
-   {} &  a &  b \\
-   \midrule
-   0 &  1 &  3 \\
-   1 &  2 &  4 \\
-   \bottomrule
-   \end{tabular}
-   \end{table}
+   data = pd.DataFrame({'a': [1, 2], 'b': [3, 4]})
+   table = data.to_latex(caption=('the full long caption', 'short caption'))
+   print(table)
 
 .. _whatsnew_120.read_csv_table_precision_default:
 
@@ -219,31 +198,19 @@ and :ref:`boolean <boolean>` data types.
 One example where the behavior of ``np.nan`` and ``pd.NA`` is different is
 comparison operations:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   # the default NumPy float64 dtype
-   >>> s1 = pd.Series([1.5, None])
-   >>> s1
-   0    1.5
-   1    NaN
-   dtype: float64
-   >>> s1 > 1
-   0     True
-   1    False
-   dtype: bool
+  # the default NumPy float64 dtype
+  s1 = pd.Series([1.5, None])
+  s1
+  s1 > 1
 
-.. code-block:: pycon
+.. ipython:: python
 
-   # the new nullable float64 dtype
-   >>> s2 = pd.Series([1.5, None], dtype="Float64")
-   >>> s2
-   0     1.5
-   1    <NA>
-   dtype: Float64
-   >>> s2 > 1
-   0    True
-   1    <NA>
-   dtype: boolean
+  # the new nullable float64 dtype
+  s2 = pd.Series([1.5, None], dtype="Float64")
+  s2
+  s2 > 1
 
 See the :ref:`missing_data.NA` doc section for more details on the behavior
 when using the ``pd.NA`` missing value indicator.
@@ -252,12 +219,9 @@ As shown above, the dtype can be specified using the "Float64" or "Float32"
 string (capitalized to distinguish it from the default "float64" data type).
 Alternatively, you can also use the dtype object:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.Series([1.5, None], dtype=pd.Float32Dtype())
-   0     1.5
-   1    <NA>
-   dtype: Float32
+   pd.Series([1.5, None], dtype=pd.Float32Dtype())
 
 Operations with the existing integer or boolean nullable data types that
 give float results will now also use the nullable floating data types (:issue:`38178`).
@@ -279,18 +243,11 @@ In the case where all inputs share a common name, this name will be assigned to 
 result. When the input names do not all agree, the result will be unnamed. Here is an
 example where the index name is preserved:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> idx = pd.Index(range(5), name='abc')
-   >>> ser = pd.Series(range(5, 10), index=idx)
-   >>> pd.concat({'x': ser[1:], 'y': ser[:-1]}, axis=1)
-          x    y
-   abc
-   0    NaN  5.0
-   1    6.0  6.0
-   2    7.0  7.0
-   3    8.0  8.0
-   4    9.0  NaN
+    idx = pd.Index(range(5), name='abc')
+    ser = pd.Series(range(5, 10), index=idx)
+    pd.concat({'x': ser[1:], 'y': ser[:-1]}, axis=1)
 
 The same is true for :class:`MultiIndex`, but the logic is applied separately on a
 level-by-level basis.
@@ -302,22 +259,11 @@ GroupBy supports EWM operations directly
 
 :class:`.DataFrameGroupBy` now supports exponentially weighted window operations directly (:issue:`16037`).
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df = pd.DataFrame({'A': ['a', 'b', 'a', 'b'], 'B': range(4)})
-   >>> df
-      A  B
-   0  a  0
-   1  b  1
-   2  a  2
-   3  b  3
-   >>> df.groupby('A').ewm(com=1.0).mean()
-               B
-   A
-   a 0  0.000000
-     2  1.333333
-   b 1  1.000000
-     3  2.333333
+    df = pd.DataFrame({'A': ['a', 'b', 'a', 'b'], 'B': range(4)})
+    df
+    df.groupby('A').ewm(com=1.0).mean()
 
 Additionally ``mean`` supports execution via `Numba <https://numba.pydata.org/>`__ with
 the  ``engine`` and ``engine_kwargs`` arguments. Numba must be installed as an optional dependency
@@ -384,10 +330,10 @@ instead of checking if *all* object-dtype columns can be considered boolean.
 This prevents pathological behavior where applying the reduction on a subset
 of columns could result in a larger Series result. See (:issue:`37799`).
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df = pd.DataFrame({"A": ["foo", "bar"], "B": [True, False]}, dtype=object)
-   >>> df["C"] = pd.Series([True, True])
+    df = pd.DataFrame({"A": ["foo", "bar"], "B": [True, False]}, dtype=object)
+    df["C"] = pd.Series([True, True])
 
 
 *Previous behavior*:
@@ -407,25 +353,20 @@ of columns could result in a larger Series result. See (:issue:`37799`).
 
 *New behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
+   :okwarning:
 
-   >>> df.all(bool_only=True)
-   B    False
-   C     True
-   dtype: bool
+    In [5]: df.all(bool_only=True)
 
-   >>> df[["B", "C"]].all(bool_only=True)
-   B    False
-   C     True
-   dtype: bool
+    In [6]: df[["B", "C"]].all(bool_only=True)
 
 
 Other DataFrame reductions with ``numeric_only=None`` will also avoid
 this pathological behavior (:issue:`37827`):
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df = pd.DataFrame({"A": [0, 1, 2], "B": ["a", "b", "c"]}, dtype=object)
+    df = pd.DataFrame({"A": [0, 1, 2], "B": ["a", "b", "c"]}, dtype=object)
 
 
 *Previous behavior*:
@@ -461,10 +402,11 @@ DataFrame reduction will now consider that column non-numeric
 instead of casting to a NumPy array which may have different semantics (:issue:`36076`,
 :issue:`28949`, :issue:`21020`).
 
-.. code-block:: pycon
+.. ipython:: python
+   :okwarning:
 
-   >>> ser = pd.Series([0, 1], dtype="category", name="A")
-   >>> df = ser.to_frame()
+    ser = pd.Series([0, 1], dtype="category", name="A")
+    df = ser.to_frame()
 
 
 *Previous behavior*:
@@ -851,7 +793,7 @@ Groupby/resample/rolling
 - Bug in :meth:`DataFrame.resample` that would throw a ``ValueError`` when resampling from ``"D"`` to ``"24H"`` over a transition into daylight savings time (DST) (:issue:`35219`)
 - Bug when combining methods :meth:`DataFrame.groupby` with :meth:`DataFrame.resample` and :meth:`DataFrame.interpolate` raising a ``TypeError`` (:issue:`35325`)
 - Bug in :meth:`.DataFrameGroupBy.apply` where a non-nuisance grouping column would be dropped from the output columns if another groupby method was called before ``.apply`` (:issue:`34656`)
-- Bug when subsetting columns on a :class:`.DataFrameGroupBy` (e.g. ``df.groupby('a')[['b']]``) would reset the attributes ``axis``, ``dropna``, ``group_keys``, ``level``, ``mutated``, ``sort``, and ``squeeze`` to their default values (:issue:`9959`)
+- Bug when subsetting columns on a :class:`.DataFrameGroupBy` (e.g. ``df.groupby('a')[['b']])``) would reset the attributes ``axis``, ``dropna``, ``group_keys``, ``level``, ``mutated``, ``sort``, and ``squeeze`` to their default values (:issue:`9959`)
 - Bug in :meth:`.DataFrameGroupBy.tshift` failing to raise ``ValueError`` when a frequency cannot be inferred for the index of a group (:issue:`35937`)
 - Bug in :meth:`DataFrame.groupby` does not always maintain column index name for ``any``, ``all``, ``bfill``, ``ffill``, ``shift`` (:issue:`29764`)
 - Bug in :meth:`.DataFrameGroupBy.apply` raising error with ``np.nan`` group(s) when ``dropna=False`` (:issue:`35889`)

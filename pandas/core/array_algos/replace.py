@@ -44,7 +44,7 @@ def should_use_regex(regex: bool, to_replace: Any) -> bool:
 
 
 def compare_or_regex_search(
-    a: ArrayLike, b: Scalar | Pattern[str], regex: bool, mask: npt.NDArray[np.bool_]
+    a: ArrayLike, b: Scalar | Pattern, regex: bool, mask: npt.NDArray[np.bool_]
 ) -> ArrayLike:
     """
     Compare two array-like inputs of the same shape or two scalar values
@@ -67,7 +67,7 @@ def compare_or_regex_search(
         return ~mask
 
     def _check_comparison_types(
-        result: ArrayLike | bool, a: ArrayLike, b: Scalar | Pattern[str]
+        result: ArrayLike | bool, a: ArrayLike, b: Scalar | Pattern
     ) -> None:
         """
         Raises an error if the two arrays (a,b) cannot be compared.
@@ -87,12 +87,9 @@ def compare_or_regex_search(
         op = lambda x: operator.eq(x, b)
     else:
         op = np.vectorize(
-            lambda x: (
-                bool(re.search(b, x))
-                if isinstance(x, str) and isinstance(b, (str, Pattern))
-                else False
-            ),
-            otypes=[bool],
+            lambda x: bool(re.search(b, x))
+            if isinstance(x, str) and isinstance(b, (str, Pattern))
+            else False
         )
 
     # GH#32621 use mask to avoid comparing to NAs
@@ -114,7 +111,7 @@ def compare_or_regex_search(
 
 
 def replace_regex(
-    values: ArrayLike, rx: re.Pattern[str], value, mask: npt.NDArray[np.bool_] | None
+    values: ArrayLike, rx: re.Pattern, value, mask: npt.NDArray[np.bool_] | None
 ) -> None:
     """
     Parameters
@@ -154,6 +151,4 @@ def replace_regex(
     if mask is None:
         values[:] = f(values)
     else:
-        if values.ndim != mask.ndim:
-            mask = np.broadcast_to(mask, values.shape)
         values[mask] = f(values[mask])

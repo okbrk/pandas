@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from pandas.compat import HAS_PYARROW
 from pandas.compat._optional import VERSIONS
 
-import pandas as pd
+from pandas import (
+    read_csv,
+    read_table,
+)
 import pandas._testing as tm
 
 
@@ -22,7 +27,7 @@ class BaseParser:
 
     def read_csv(self, *args, **kwargs):
         kwargs = self.update_kwargs(kwargs)
-        return pd.read_csv(*args, **kwargs)
+        return read_csv(*args, **kwargs)
 
     def read_csv_check_warnings(
         self,
@@ -43,11 +48,11 @@ class BaseParser:
             raise_on_extra_warnings=raise_on_extra_warnings,
             check_stacklevel=check_stacklevel,
         ):
-            return pd.read_csv(*args, **kwargs)
+            return read_csv(*args, **kwargs)
 
     def read_table(self, *args, **kwargs):
         kwargs = self.update_kwargs(kwargs)
-        return pd.read_table(*args, **kwargs)
+        return read_table(*args, **kwargs)
 
     def read_table_check_warnings(
         self,
@@ -64,7 +69,7 @@ class BaseParser:
         with tm.assert_produces_warning(
             warn_type, match=warn_msg, raise_on_extra_warnings=raise_on_extra_warnings
         ):
-            return pd.read_table(*args, **kwargs)
+            return read_table(*args, **kwargs)
 
 
 class CParser(BaseParser):
@@ -91,11 +96,19 @@ class PyArrowParser(BaseParser):
 
 
 @pytest.fixture
+def csv_dir_path(datapath):
+    """
+    The directory path to the data files needed for parser tests.
+    """
+    return datapath("io", "parser", "data")
+
+
+@pytest.fixture
 def csv1(datapath):
     """
     The path to the data file "test1.csv" needed for parser tests.
     """
-    return datapath("io", "data", "csv", "test1.csv")
+    return os.path.join(datapath("io", "data", "csv"), "test1.csv")
 
 
 _cParserHighMemory = CParserHighMemory
@@ -171,7 +184,7 @@ def _get_all_parser_float_precision_combinations():
     """
     params = []
     ids = []
-    for parser, parser_id in zip(_all_parsers, _all_parser_ids, strict=True):
+    for parser, parser_id in zip(_all_parsers, _all_parser_ids):
         if hasattr(parser, "values"):
             # Wrapped in pytest.param, get the actual parser back
             parser = parser.values[0]

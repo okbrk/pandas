@@ -1,4 +1,3 @@
-import gc
 from importlib import import_module
 import os
 
@@ -59,9 +58,6 @@ def setup(*args, **kwargs):
     # set up the random seed before each function.
     # https://asv.readthedocs.io/en/latest/writing_benchmarks.html
     np.random.seed(1234)
-    # Collect garbage before each timing sample so that bimodal results
-    # from gen-0 collections firing mid-measurement are damped.
-    gc.collect()
 
 
 class BaseIO:

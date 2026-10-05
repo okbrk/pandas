@@ -53,25 +53,6 @@ class ToCSV(BaseIO):
         self.df.to_csv(self.fname)
 
 
-class ToCSVFloatFormatVariants(BaseIO):
-    fname = "__test__.csv"
-
-    def setup(self):
-        self.df = DataFrame(np.random.default_rng(seed=42).random((1000, 1000)))
-
-    def time_old_style_percent_format(self):
-        self.df.to_csv(self.fname, float_format="%.6f")
-
-    def time_new_style_brace_format(self):
-        self.df.to_csv(self.fname, float_format="{:.6f}")
-
-    def time_new_style_thousands_format(self):
-        self.df.to_csv(self.fname, float_format="{:,.2f}")
-
-    def time_callable_format(self):
-        self.df.to_csv(self.fname, float_format=lambda x: f"{x:.6f}")
-
-
 class ToCSVMultiIndexUnusedLevels(BaseIO):
     fname = "__test__.csv"
 
@@ -411,30 +392,6 @@ class ReadCSVFloatPrecision(StringIORewind):
         )
 
 
-class ReadCSVInts(StringIORewind):
-    # Integer columns at default settings, over digit counts that bracket the
-    # C parser's behavior: it consumes eight digits at a time, so the
-    # per-token fixed cost dominates for short values and amortizes for long
-    # ones. 18 digits is the widest that always fits in int64 for both signs,
-    # so every case here is inferred as an integer column.
-    params = ([1, 3, 9, 18], [False, True])
-    param_names = ["num_digits", "negative"]
-
-    def setup(self, num_digits, negative):
-        ints = [
-            ("-" if negative else "")
-            + random.choice(string.digits[1:])
-            + "".join(random.choice(string.digits) for _ in range(num_digits - 1))
-            for _ in range(15)
-        ]
-        rows = ",".join(["{}"] * 3) + "\n"
-        data = (rows * 5).format(*ints) * 2000  # 10000 x 3 ints csv
-        self.StringIO_input = StringIO(data)
-
-    def time_read_csv(self, num_digits, negative):
-        read_csv(self.data(self.StringIO_input), header=None, names=list("abc"))
-
-
 class ReadCSVEngine(StringIORewind):
     params = ["c", "python", "pyarrow"]
     param_names = ["engine"]
@@ -637,7 +594,7 @@ class ReadCSVIndexCol(StringIORewind):
         self.StringIO_input = StringIO(data)
 
     def time_read_csv_index_col(self):
-        read_csv(self.data(self.StringIO_input), index_col="a")
+        read_csv(self.StringIO_input, index_col="a")
 
 
 class ReadCSVDatePyarrowEngine(StringIORewind):
@@ -648,7 +605,7 @@ class ReadCSVDatePyarrowEngine(StringIORewind):
 
     def time_read_csv_index_col(self):
         read_csv(
-            self.data(self.StringIO_input),
+            self.StringIO_input,
             parse_dates=["a"],
             engine="pyarrow",
             dtype_backend="pyarrow",
@@ -664,78 +621,6 @@ class ReadCSVCParserLowMemory:
 
     def peakmem_over_2gb_input(self):
         read_csv(self.csv, engine="c", low_memory=False)
-
-
-class ReadCSVParallelLargeFile(BaseIO):
-    """
-    Benchmark for the parallel read_csv path (C engine, large local files).
-
-    The parallel path activates automatically when reading from a local file
-    path with the C engine and the file exceeds ~50 MB.  Using a BytesIO
-    baseline lets us measure the speedup from parallelism directly.
-    """
-
-    fname = "__test_large__.csv"
-
-    # nrows chosen so that the resulting file sits clearly above the ~50 MB
-    # parallel-activation threshold (500 K rows ≈ 45 MB float, 2 M ≈ 184 MB).
-    params = (
-        [1_000_000, 2_000_000],
-        ["float", "int", "mixed"],
-    )
-    param_names = ["nrows", "dtype"]
-
-    def setup(self, nrows, dtype):
-        rng = np.random.default_rng(42)
-        if dtype == "float":
-            df = DataFrame(
-                {
-                    "a": rng.random(nrows),
-                    "b": rng.random(nrows),
-                    "c": rng.random(nrows),
-                    "d": rng.random(nrows),
-                    "e": rng.random(nrows),
-                }
-            )
-        elif dtype == "int":
-            df = DataFrame(
-                {
-                    "a": rng.integers(0, 10**6, nrows),
-                    "b": rng.integers(0, 10**6, nrows),
-                    "c": rng.integers(0, 10**6, nrows),
-                    "d": rng.integers(0, 10**6, nrows),
-                    "e": rng.integers(0, 10**6, nrows),
-                }
-            )
-        else:  # mixed
-            df = DataFrame(
-                {
-                    "a": rng.integers(0, 10**6, nrows),
-                    "b": rng.random(nrows),
-                    "c": [
-                        "cat" if i % 3 == 0 else "dog" if i % 3 == 1 else "fish"
-                        for i in range(nrows)
-                    ],
-                    "d": rng.random(nrows),
-                    "e": rng.integers(0, 1000, nrows),
-                }
-            )
-        df.to_csv(self.fname, index=False)
-
-        # Pre-read raw bytes for the serial (BytesIO) baseline so that disk
-        # I/O is not included in either timing.
-        with open(self.fname, "rb") as f:
-            self._raw = f.read()
-
-    def time_from_filepath(self, nrows, dtype):
-        """File-path read: takes the parallel path for large files."""
-        read_csv(self.fname)
-
-    def time_from_bytesio(self, nrows, dtype):
-        """BytesIO read: always serial (parallel path requires a file path)."""
-        from io import BytesIO
-
-        read_csv(BytesIO(self._raw))
 
 
 from ..pandas_vb_common import setup  # noqa: F401 isort:skip

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-import pandas as pd
+from pandas import DataFrame
 
 
 class TestCopy:
@@ -26,7 +26,7 @@ class TestCopy:
 
     def test_copy_consolidates(self):
         # GH#42477
-        df = pd.DataFrame(
+        df = DataFrame(
             {
                 "a": np.random.default_rng(2).integers(0, 100, size=55),
                 "b": np.random.default_rng(2).integers(0, 100, size=55),

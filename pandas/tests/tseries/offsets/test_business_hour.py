@@ -21,8 +21,11 @@ from pandas._libs.tslibs.offsets import (
     Nano,
 )
 
-import pandas as pd
-import pandas._testing as tm
+from pandas import (
+    DatetimeIndex,
+    _testing as tm,
+    date_range,
+)
 from pandas.tests.tseries.offsets.common import assert_offset_equal
 
 
@@ -224,7 +227,7 @@ class TestBusinessHour:
     ):
         assert offset1 + dt == datetime(2014, 7, 1, 11)
         assert offset2 + dt == datetime(2014, 7, 1, 13)
-        assert offset3 + dt == datetime(2014, 7, 1, 9)
+        assert offset3 + dt == datetime(2014, 6, 30, 17)
         assert offset4 + dt == datetime(2014, 6, 30, 14)
         assert offset8 + dt == datetime(2014, 7, 1, 11)
         assert offset9 + dt == datetime(2014, 7, 1, 22)
@@ -372,9 +375,9 @@ class TestBusinessHour:
                 datetime(2014, 7, 1, 8): datetime(2014, 6, 30),
                 datetime(2014, 7, 1, 17): datetime(2014, 7, 1),
                 datetime(2014, 7, 1, 16): datetime(2014, 7, 1),
-                datetime(2014, 7, 1, 10): datetime(2014, 7, 1),
+                datetime(2014, 7, 1, 10): datetime(2014, 6, 30),
                 datetime(2014, 7, 1, 0): datetime(2014, 6, 30),
-                datetime(2014, 7, 7, 10): datetime(2014, 7, 7),
+                datetime(2014, 7, 7, 10): datetime(2014, 7, 4),
                 datetime(2014, 7, 7, 10, 1): datetime(2014, 7, 7),
                 datetime(2014, 7, 5, 23): datetime(2014, 7, 4),
                 datetime(2014, 7, 6, 10): datetime(2014, 7, 4),
@@ -403,7 +406,7 @@ class TestBusinessHour:
     def test_normalize(self, case):
         offset, cases = case
         for dt, expected in cases.items():
-            assert offset + dt == expected
+            assert offset._apply(dt) == expected
 
     on_offset_cases = []
     on_offset_cases.append(
@@ -552,7 +555,7 @@ class TestBusinessHour:
                 datetime(2014, 7, 1, 13): datetime(2014, 7, 1, 12),
                 datetime(2014, 7, 1, 15): datetime(2014, 7, 1, 14),
                 datetime(2014, 7, 1, 16): datetime(2014, 7, 1, 15),
-                datetime(2014, 7, 1, 10): datetime(2014, 7, 1, 9),
+                datetime(2014, 7, 1, 10): datetime(2014, 6, 30, 17),
                 datetime(2014, 7, 1, 16, 30, 15): datetime(2014, 7, 1, 15, 30, 15),
                 datetime(2014, 7, 1, 9, 30, 15): datetime(2014, 6, 30, 16, 30, 15),
                 datetime(2014, 7, 1, 17): datetime(2014, 7, 1, 16),
@@ -574,7 +577,7 @@ class TestBusinessHour:
             BusinessHour(-4),
             {
                 datetime(2014, 7, 1, 11): datetime(2014, 6, 30, 15),
-                datetime(2014, 7, 1, 13): datetime(2014, 7, 1, 9),
+                datetime(2014, 7, 1, 13): datetime(2014, 6, 30, 17),
                 datetime(2014, 7, 1, 15): datetime(2014, 7, 1, 11),
                 datetime(2014, 7, 1, 16): datetime(2014, 7, 1, 12),
                 datetime(2014, 7, 1, 17): datetime(2014, 7, 1, 13),
@@ -622,7 +625,7 @@ class TestBusinessHour:
             {
                 datetime(2014, 7, 2, 11): datetime(2014, 7, 1, 15),
                 datetime(2014, 7, 2, 13): datetime(2014, 7, 1, 15),
-                datetime(2014, 7, 2, 14): datetime(2014, 7, 2, 13),
+                datetime(2014, 7, 2, 14): datetime(2014, 7, 1, 16),
                 datetime(2014, 7, 2, 15): datetime(2014, 7, 2, 14),
                 datetime(2014, 7, 2, 19): datetime(2014, 7, 2, 15),
                 datetime(2014, 7, 2, 16): datetime(2014, 7, 2, 15),
@@ -637,7 +640,7 @@ class TestBusinessHour:
                 datetime(2014, 7, 1, 17): datetime(2014, 7, 1, 13),
                 datetime(2014, 7, 2, 14): datetime(2014, 7, 2, 11),
                 datetime(2014, 7, 2, 8): datetime(2014, 7, 1, 13),
-                datetime(2014, 7, 2, 13): datetime(2014, 7, 2, 10),
+                datetime(2014, 7, 2, 13): datetime(2014, 7, 1, 16),
                 datetime(2014, 7, 2, 19): datetime(2014, 7, 2, 13),
                 datetime(2014, 7, 2, 11, 30): datetime(2014, 7, 1, 14, 30),
                 datetime(2014, 7, 3, 0): datetime(2014, 7, 2, 13),
@@ -673,7 +676,7 @@ class TestBusinessHour:
                 datetime(2014, 7, 2, 14): datetime(2014, 7, 2, 4),
                 datetime(2014, 7, 2, 8): datetime(2014, 7, 2, 4),
                 datetime(2014, 7, 2, 13): datetime(2014, 7, 2, 4),
-                datetime(2014, 7, 2, 20): datetime(2014, 7, 2, 19),
+                datetime(2014, 7, 2, 20): datetime(2014, 7, 2, 5),
                 datetime(2014, 7, 2, 19): datetime(2014, 7, 2, 4),
                 datetime(2014, 7, 2, 19, 30): datetime(2014, 7, 2, 4, 30),
                 datetime(2014, 7, 3, 0): datetime(2014, 7, 2, 23),
@@ -754,16 +757,16 @@ class TestBusinessHour:
             {
                 datetime(2014, 7, 1, 11): datetime(2014, 6, 30, 16),
                 datetime(2014, 7, 1, 13): datetime(2014, 6, 30, 17),
-                datetime(2014, 7, 1, 15): datetime(2014, 7, 1, 9),
+                datetime(2014, 7, 1, 15): datetime(2014, 6, 30, 18),
                 datetime(2014, 7, 1, 16): datetime(2014, 7, 1, 10),
                 datetime(2014, 7, 1, 17): datetime(2014, 7, 1, 11),
                 datetime(2014, 7, 2, 11): datetime(2014, 7, 1, 16),
-                datetime(2014, 7, 2, 8): datetime(2014, 7, 1, 14),
-                datetime(2014, 7, 2, 19): datetime(2014, 7, 2, 14),
-                datetime(2014, 7, 2, 23): datetime(2014, 7, 2, 14),
-                datetime(2014, 7, 3, 0): datetime(2014, 7, 2, 14),
-                datetime(2014, 7, 5, 15): datetime(2014, 7, 4, 14),
-                datetime(2014, 7, 4, 18): datetime(2014, 7, 4, 14),
+                datetime(2014, 7, 2, 8): datetime(2014, 7, 1, 12),
+                datetime(2014, 7, 2, 19): datetime(2014, 7, 2, 12),
+                datetime(2014, 7, 2, 23): datetime(2014, 7, 2, 12),
+                datetime(2014, 7, 3, 0): datetime(2014, 7, 2, 12),
+                datetime(2014, 7, 5, 15): datetime(2014, 7, 4, 12),
+                datetime(2014, 7, 4, 18): datetime(2014, 7, 4, 12),
                 datetime(2014, 7, 7, 9, 30): datetime(2014, 7, 4, 14, 30),
                 datetime(2014, 7, 7, 9, 30, 30): datetime(2014, 7, 4, 14, 30, 30),
             },
@@ -775,9 +778,9 @@ class TestBusinessHour:
                 datetime(2014, 7, 2, 14): datetime(2014, 7, 2, 4),
                 datetime(2014, 7, 2, 8): datetime(2014, 7, 2, 4),
                 datetime(2014, 7, 2, 13): datetime(2014, 7, 2, 4),
-                datetime(2014, 7, 2, 20): datetime(2014, 7, 2, 19),
+                datetime(2014, 7, 2, 20): datetime(2014, 7, 2, 5),
                 datetime(2014, 7, 2, 19): datetime(2014, 7, 2, 4),
-                datetime(2014, 7, 2, 4): datetime(2014, 7, 2, 3),
+                datetime(2014, 7, 2, 4): datetime(2014, 7, 2, 1),
                 datetime(2014, 7, 2, 19, 30): datetime(2014, 7, 2, 4, 30),
                 datetime(2014, 7, 3, 0): datetime(2014, 7, 2, 23),
                 datetime(2014, 7, 3, 6): datetime(2014, 7, 3, 4),
@@ -829,7 +832,7 @@ class TestBusinessHour:
                 datetime(2014, 7, 1, 11): datetime(2014, 6, 26, 10),
                 datetime(2014, 7, 1, 13): datetime(2014, 6, 26, 12),
                 datetime(2014, 7, 1, 9): datetime(2014, 6, 25, 16),
-                datetime(2014, 7, 1, 10): datetime(2014, 6, 26, 9),
+                datetime(2014, 7, 1, 10): datetime(2014, 6, 25, 17),
                 datetime(2014, 7, 3, 11): datetime(2014, 6, 30, 10),
                 datetime(2014, 7, 3, 8): datetime(2014, 6, 27, 16),
                 datetime(2014, 7, 3, 19): datetime(2014, 6, 30, 16),
@@ -867,7 +870,7 @@ class TestBusinessHour:
                 datetime(2014, 7, 1, 11): datetime(2014, 6, 26, 10),
                 datetime(2014, 7, 1, 13): datetime(2014, 6, 26, 11),
                 datetime(2014, 7, 1, 9): datetime(2014, 6, 25, 18),
-                datetime(2014, 7, 1, 10): datetime(2014, 6, 26, 9),
+                datetime(2014, 7, 1, 10): datetime(2014, 6, 25, 19),
                 datetime(2014, 7, 3, 11): datetime(2014, 6, 30, 10),
                 datetime(2014, 7, 3, 8): datetime(2014, 6, 27, 18),
                 datetime(2014, 7, 3, 19): datetime(2014, 6, 30, 18),
@@ -950,24 +953,17 @@ class TestBusinessHour:
             for base, expected in cases.items():
                 assert_offset_equal(offset, base, expected)
 
-    def test_subtract_bh_at_opening_boundary(self):
-        # GH#33682 subtracting BusinessHour landing exactly on opening time
-        # should stay at the opening, not jump to previous day's close
-        result = Timestamp("2000-01-10 10:00") - BusinessHour(1)
-        expected = Timestamp("2000-01-10 09:00")
-        assert result == expected
-
     @pytest.mark.parametrize("td_unit", ["s", "ms", "us", "ns"])
     def test_bday_ignores_timedeltas(self, unit, td_unit):
         # GH#55608
-        idx = pd.date_range("2010/02/01", "2010/02/10", freq="12h", unit=unit)
+        idx = date_range("2010/02/01", "2010/02/10", freq="12h", unit=unit)
         td = Timedelta(3, unit="h").as_unit(td_unit)
         off = BDay(offset=td)
         t1 = idx + off
 
         exp_unit = tm.get_finest_unit(td.unit, idx.unit)
 
-        expected = pd.DatetimeIndex(
+        expected = DatetimeIndex(
             [
                 "2010-02-02 03:00:00",
                 "2010-02-02 15:00:00",
@@ -994,16 +990,16 @@ class TestBusinessHour:
         tm.assert_index_equal(t1, expected)
 
         # TODO(GH#55564): as_unit will be unnecessary
-        pointwise = pd.DatetimeIndex([x + off for x in idx]).as_unit(exp_unit)
+        pointwise = DatetimeIndex([x + off for x in idx]).as_unit(exp_unit)
         tm.assert_index_equal(pointwise, expected)
 
     def test_add_bday_offset_nanos(self):
         # GH#55608
-        idx = pd.date_range("2010/02/01", "2010/02/10", freq="12h", unit="ns")
+        idx = date_range("2010/02/01", "2010/02/10", freq="12h", unit="ns")
         off = BDay(offset=Timedelta(3, unit="ns"))
 
         result = idx + off
-        expected = pd.DatetimeIndex([x + off for x in idx])
+        expected = DatetimeIndex([x + off for x in idx])
         tm.assert_index_equal(result, expected)
 
 

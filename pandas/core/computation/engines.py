@@ -13,7 +13,6 @@ from pandas.core.computation.align import (
     align_terms,
     reconstruct_object,
 )
-from pandas.core.computation.expressions import normalize_numexpr_result
 from pandas.core.computation.ops import (
     MATHOPS,
     REDUCTIONS,
@@ -101,6 +100,12 @@ class AbstractEngine(metaclass=abc.ABCMeta):
         """
         Return an evaluated expression.
 
+        Parameters
+        ----------
+        env : Scope
+            The local and global environment in which to evaluate an
+            expression.
+
         Notes
         -----
         Must be implemented by subclasses.
@@ -121,7 +126,7 @@ class NumExprEngine(AbstractEngine):
         env = self.expr.env
         scope = env.full_scope
         _check_ne_builtin_clash(self.expr)
-        return normalize_numexpr_result(ne.evaluate(s, local_dict=scope))
+        return ne.evaluate(s, local_dict=scope)
 
 
 class PythonEngine(AbstractEngine):

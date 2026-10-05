@@ -20,10 +20,6 @@ from pandas.core.dtypes.common import (
     is_list_like,
     is_scalar,
 )
-from pandas.core.dtypes.dtypes import (
-    IntervalDtype,
-    PeriodDtype,
-)
 
 import pandas.core.common as com
 from pandas.core.computation.common import (
@@ -111,10 +107,8 @@ class Term:
     def _resolve_name(self):
         local_name = str(self.local_name)
         is_local = self.is_local
-        if (
-            not str(self.name).startswith(LOCAL_TAG)
-            and local_name in self.env.scope
-            and isinstance(self.env.scope[local_name], type)
+        if local_name in self.env.scope and isinstance(
+            self.env.scope[local_name], type
         ):
             is_local = False
 
@@ -152,18 +146,15 @@ class Term:
     @property
     def type(self):
         try:
-            # GH#35247 avoid .values which boxes PeriodArray/IntervalArray
-            dtype = self._value.dtype
+            # potentially very slow for large, mixed dtype frames
+            return self._value.values.dtype
         except AttributeError:
             try:
-                return self._value.values.dtype  # DataFrame
+                # ndarray
+                return self._value.dtype
             except AttributeError:
-                return type(self._value)  # scalar
-
-        # Match .values.dtype behavior for types that external_values boxes
-        if isinstance(dtype, (PeriodDtype, IntervalDtype)):
-            return np.dtype("object")
-        return dtype
+                # scalar
+                return type(self._value)
 
     return_type = type
 
@@ -206,6 +197,8 @@ class Constant(Term):
         return self.value
 
     def __repr__(self) -> str:
+        # in python 2 str() of float
+        # can truncate shorter than repr()
         return repr(self.name)
 
 
@@ -224,7 +217,7 @@ class Op:
         self.operands = operands
         self.encoding = encoding
 
-    def __iter__(self) -> Iterator[Term | Op]:
+    def __iter__(self) -> Iterator:
         return iter(self.operands)
 
     def __repr__(self) -> str:
@@ -309,11 +302,11 @@ _cmp_ops_funcs = (
     _in,
     _not_in,
 )
-_cmp_ops_dict = dict(zip(CMP_OPS_SYMS, _cmp_ops_funcs, strict=True))
+_cmp_ops_dict = dict(zip(CMP_OPS_SYMS, _cmp_ops_funcs))
 
 BOOL_OPS_SYMS = ("&", "|", "and", "or")
 _bool_ops_funcs = (operator.and_, operator.or_, operator.and_, operator.or_)
-_bool_ops_dict = dict(zip(BOOL_OPS_SYMS, _bool_ops_funcs, strict=True))
+_bool_ops_dict = dict(zip(BOOL_OPS_SYMS, _bool_ops_funcs))
 
 ARITH_OPS_SYMS = ("+", "-", "*", "/", "**", "//", "%")
 _arith_ops_funcs = (
@@ -325,7 +318,7 @@ _arith_ops_funcs = (
     operator.floordiv,
     operator.mod,
 )
-_arith_ops_dict = dict(zip(ARITH_OPS_SYMS, _arith_ops_funcs, strict=True))
+_arith_ops_dict = dict(zip(ARITH_OPS_SYMS, _arith_ops_funcs))
 
 _binary_ops_dict = {}
 
@@ -440,36 +433,32 @@ class BinOp(Op):
         """
 
         def stringify(value):
-            encoder: Callable[[object], str | bytes]
+            encoder: Callable
             if self.encoding is not None:
                 encoder = partial(pprint_thing_encoded, encoding=self.encoding)
             else:
                 encoder = pprint_thing
             return encoder(value)
 
-        def convert(term) -> None:
-            v = term.value
-            if isinstance(v, (int, float)):
-                v = stringify(v)
-            try:
-                v = Timestamp(ensure_decoded(v))
-            except ValueError:
-                if self.op in ("==", "!="):
-                    # leave unparsable values to compare unequal, matching
-                    #  comparisons outside of eval
-                    return
-                raise
-            if v.tz is not None:
-                v = v.tz_convert("UTC")
-            term.update(v)
-
         lhs, rhs = self.lhs, self.rhs
 
         if is_term(lhs) and lhs.is_datetime and is_term(rhs) and rhs.is_scalar:
-            convert(rhs)
+            v = rhs.value
+            if isinstance(v, (int, float)):
+                v = stringify(v)
+            v = Timestamp(ensure_decoded(v))
+            if v.tz is not None:
+                v = v.tz_convert("UTC")
+            self.rhs.update(v)
 
         if is_term(rhs) and rhs.is_datetime and is_term(lhs) and lhs.is_scalar:
-            convert(lhs)
+            v = lhs.value
+            if isinstance(v, (int, float)):
+                v = stringify(v)
+            v = Timestamp(ensure_decoded(v))
+            if v.tz is not None:
+                v = v.tz_convert("UTC")
+            self.lhs.update(v)
 
     def _disallow_scalar_only_bool_ops(self) -> None:
         rhs = self.rhs
@@ -495,7 +484,7 @@ class BinOp(Op):
 
 UNARY_OPS_SYMS = ("+", "-", "~", "not")
 _unary_ops_funcs = (operator.pos, operator.neg, operator.invert, operator.invert)
-_unary_ops_dict = dict(zip(UNARY_OPS_SYMS, _unary_ops_funcs, strict=True))
+_unary_ops_dict = dict(zip(UNARY_OPS_SYMS, _unary_ops_funcs))
 
 
 class UnaryOp(Op):
@@ -523,7 +512,8 @@ class UnaryOp(Op):
             self.func = _unary_ops_dict[op]
         except KeyError as err:
             raise ValueError(
-                f"Invalid unary operator {op!r}, valid operators are {UNARY_OPS_SYMS}"
+                f"Invalid unary operator {op!r}, "
+                f"valid operators are {UNARY_OPS_SYMS}"
             ) from err
 
     def __call__(self, env) -> MathCall:

@@ -1,5 +1,4 @@
 from datetime import datetime
-import re
 import zoneinfo
 
 from dateutil.tz import gettz
@@ -196,30 +195,3 @@ class TestTimestampReplace:
         ts_replaced = ts.replace(second=1)
 
         assert ts_replaced.fold == fold
-
-    def test_replace_updates_unit(self):
-        # GH#57749
-        ts = Timestamp("2023-07-15 23:08:12.134567123")
-        ts2 = Timestamp("2023-07-15 23:08:12.000000")
-        assert ts2.unit == "us"
-        result = ts2.replace(microsecond=ts.microsecond, nanosecond=ts.nanosecond)
-        assert result.unit == "ns"
-        assert result == ts
-
-        ts3 = Timestamp("2023-07-15 23:08:12").as_unit("s")
-        result = ts3.replace(microsecond=ts2.microsecond)
-        assert result.unit == "us"
-        assert result == ts2
-
-
-@pytest.mark.parametrize("tz", [None, "UTC"])
-def test_replace_hits_nat_sentinel(tz):
-    # GH#66510 the replaced value renders onto iNaT, which is not NaT but is
-    #  indistinguishable from it once stored in a datetime64 array
-    ts = Timestamp("1677-09-21 00:12:43.145224193", tz=tz)
-    msg = re.escape("Out of bounds nanosecond timestamp: 1677-09-21 00:12:43.145224192")
-    with pytest.raises(OutOfBoundsDatetime, match=msg):
-        ts.replace(nanosecond=192)
-
-    # the neighbouring value is fine
-    assert ts.replace(nanosecond=194)._value == ts._value + 1

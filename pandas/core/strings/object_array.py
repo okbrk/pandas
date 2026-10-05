@@ -5,21 +5,23 @@ import re
 import textwrap
 from typing import (
     TYPE_CHECKING,
-    Any,
     Literal,
     cast,
 )
 import unicodedata
+import warnings
 
 import numpy as np
 
 from pandas._libs import lib
 import pandas._libs.missing as libmissing
 import pandas._libs.ops as libops
-from pandas.util._validators import validate_na_arg
+from pandas.util._exceptions import find_stack_level
 
 from pandas.core.dtypes.common import pandas_dtype
 from pandas.core.dtypes.missing import isna
+
+from pandas.core.strings.base import BaseStringArrayMethods
 
 if TYPE_CHECKING:
     from collections.abc import (
@@ -33,7 +35,7 @@ if TYPE_CHECKING:
     )
 
 
-class ObjectStringArrayMixin:
+class ObjectStringArrayMixin(BaseStringArrayMethods):
     """
     String Methods operating on object-dtype ndarrays.
     """
@@ -41,12 +43,6 @@ class ObjectStringArrayMixin:
     def __len__(self) -> int:
         # For typing, _str_map relies on the object being sized.
         raise NotImplementedError
-
-    def _str_getitem(self, key):
-        if isinstance(key, slice):
-            return self._str_slice(start=key.start, stop=key.stop, step=key.step)
-        else:
-            return self._str_get(key)
 
     def _str_map(
         self,
@@ -96,9 +92,7 @@ class ObjectStringArrayMixin:
             )
 
             if len(err.args) >= 1 and re.search(p_err, err.args[0]):
-                # NOTE: matches CPython's TypeError when a user-supplied
-                # callable (e.g. `repl` in str.replace) is called with the
-                # wrong number of positional arguments.
+                # FIXME: this should be totally avoidable
                 raise err
 
             def g(x):
@@ -147,7 +141,6 @@ class ObjectStringArrayMixin:
         na=lib.no_default,
         regex: bool = True,
     ):
-        validate_na_arg(na, name="na")
         if regex:
             if not case:
                 flags |= re.IGNORECASE
@@ -155,27 +148,50 @@ class ObjectStringArrayMixin:
             pat = re.compile(pat, flags=flags)
 
             f = lambda x: pat.search(x) is not None
-        elif case:
-            f = lambda x: pat in x
         else:
-            upper_pat = pat.upper()
-            f = lambda x: upper_pat in x.upper()
+            if case:
+                f = lambda x: pat in x
+            else:
+                upper_pat = pat.upper()
+                f = lambda x: upper_pat in x.upper()
+        if na is not lib.no_default and not isna(na) and not isinstance(na, bool):
+            # GH#59561
+            warnings.warn(
+                "Allowing a non-bool 'na' in obj.str.contains is deprecated "
+                "and will raise in a future version.",
+                FutureWarning,
+                stacklevel=find_stack_level(),
+            )
         return self._str_map(f, na, dtype=np.dtype("bool"))
 
     def _str_startswith(self, pat, na=lib.no_default):
-        validate_na_arg(na, name="na")
         f = lambda x: x.startswith(pat)
+        if na is not lib.no_default and not isna(na) and not isinstance(na, bool):
+            # GH#59561
+            warnings.warn(
+                "Allowing a non-bool 'na' in obj.str.startswith is deprecated "
+                "and will raise in a future version.",
+                FutureWarning,
+                stacklevel=find_stack_level(),
+            )
         return self._str_map(f, na_value=na, dtype=np.dtype(bool))
 
     def _str_endswith(self, pat, na=lib.no_default):
-        validate_na_arg(na, name="na")
         f = lambda x: x.endswith(pat)
+        if na is not lib.no_default and not isna(na) and not isinstance(na, bool):
+            # GH#59561
+            warnings.warn(
+                "Allowing a non-bool 'na' in obj.str.endswith is deprecated "
+                "and will raise in a future version.",
+                FutureWarning,
+                stacklevel=find_stack_level(),
+            )
         return self._str_map(f, na_value=na, dtype=np.dtype(bool))
 
     def _str_replace(
         self,
-        pat: str | re.Pattern[str],
-        repl: str | Callable[..., Any],
+        pat: str | re.Pattern,
+        repl: str | Callable,
         n: int = -1,
         case: bool = True,
         flags: int = 0,
@@ -200,7 +216,7 @@ class ObjectStringArrayMixin:
 
     def _str_repeat(self, repeats: int | Sequence[int]):
         if lib.is_integer(repeats):
-            rint = cast("int", repeats)
+            rint = cast(int, repeats)
 
             def scalar_rep(x):
                 try:
@@ -232,7 +248,7 @@ class ObjectStringArrayMixin:
 
     def _str_match(
         self,
-        pat: str | re.Pattern[str],
+        pat: str,
         case: bool = True,
         flags: int = 0,
         na: Scalar | lib.NoDefault = lib.no_default,
@@ -240,29 +256,14 @@ class ObjectStringArrayMixin:
         if not case:
             flags |= re.IGNORECASE
 
-        if isinstance(pat, re.Pattern):
-            # pat already carries its own flags. IGNORECASE is the only one we
-            #  can contribute (via `case`), so it is the only bit we compare,
-            #  and only in the direction that would *add* it: a pat that is
-            #  already case-insensitive, e.g. via an inline "(?i)", is honored
-            #  as written. Comparing the full flag set would reject a pat
-            #  compiled with e.g. re.MULTILINE (GH#63108).
-            if flags & ~re.IGNORECASE:
-                raise ValueError(
-                    "Cannot pass flags in addition to an already-compiled pat"
-                )
-            if flags & re.IGNORECASE and not pat.flags & re.IGNORECASE:
-                raise ValueError("Cannot pass flags that do not match pat.flags")
-            regex = pat
-        else:
-            regex = re.compile(pat, flags=flags)
+        regex = re.compile(pat, flags=flags)
 
         f = lambda x: regex.match(x) is not None
         return self._str_map(f, na_value=na, dtype=np.dtype(bool))
 
     def _str_fullmatch(
         self,
-        pat: str | re.Pattern[str],
+        pat: str | re.Pattern,
         case: bool = True,
         flags: int = 0,
         na: Scalar | lib.NoDefault = lib.no_default,
@@ -314,11 +315,17 @@ class ObjectStringArrayMixin:
         return self._str_map(f)
 
     def _str_index(self, sub, start: int = 0, end=None):
-        f = lambda x: x.index(sub, start, end)
+        if end:
+            f = lambda x: x.index(sub, start, end)
+        else:
+            f = lambda x: x.index(sub, start, end)
         return self._str_map(f, dtype="int64")
 
     def _str_rindex(self, sub, start: int = 0, end=None):
-        f = lambda x: x.rindex(sub, start, end)
+        if end:
+            f = lambda x: x.rindex(sub, start, end)
+        else:
+            f = lambda x: x.rindex(sub, start, end)
         return self._str_map(f, dtype="int64")
 
     def _str_join(self, sep: str):
@@ -359,7 +366,7 @@ class ObjectStringArrayMixin:
 
     def _str_split(
         self,
-        pat: str | re.Pattern[str] | None = None,
+        pat: str | re.Pattern | None = None,
         n=-1,
         expand: bool = False,
         regex: bool | None = None,
@@ -369,16 +376,17 @@ class ObjectStringArrayMixin:
                 n = -1
             f = lambda x: x.split(pat, n)
         else:
-            new_pat: str | re.Pattern[str]
+            new_pat: str | re.Pattern
             if regex is True or isinstance(pat, re.Pattern):
                 new_pat = re.compile(pat)
             elif regex is False:
                 new_pat = pat
             # regex is None so link to old behavior #43563
-            elif len(pat) == 1:
-                new_pat = pat
             else:
-                new_pat = re.compile(pat)
+                if len(pat) == 1:
+                    new_pat = pat
+                else:
+                    new_pat = re.compile(pat)
 
             if isinstance(new_pat, re.Pattern):
                 if n is None or n == -1:
@@ -391,9 +399,6 @@ class ObjectStringArrayMixin:
         return self._str_map(f, dtype=object)
 
     def _str_rsplit(self, pat=None, n=-1):
-        if pat is not None and not isinstance(pat, str):
-            msg = f"expected a string object, not {type(pat).__name__}"
-            raise TypeError(msg)
         if n is None or n == 0:
             n = -1
         f = lambda x: x.rsplit(pat, n)
@@ -429,7 +434,7 @@ class ObjectStringArrayMixin:
             dummies_dtype = _dtype
         else:
             dummies_dtype = np.bool_
-        dummies = np.empty((len(arr), len(tags2)), dtype=dummies_dtype, order="F")
+        dummies = np.empty((len(arr), len(tags2)), dtype=dummies_dtype)
 
         def _isin(test_elements: str, element: str) -> bool:
             return element in test_elements
@@ -449,9 +454,6 @@ class ObjectStringArrayMixin:
 
     def _str_isalpha(self):
         return self._str_map(str.isalpha, dtype="bool")
-
-    def _str_isascii(self):
-        return self._str_map(str.isascii, dtype="bool")
 
     def _str_isdecimal(self):
         return self._str_map(str.isdecimal, dtype="bool")
@@ -508,9 +510,7 @@ class ObjectStringArrayMixin:
     def _str_removesuffix(self, suffix: str):
         return self._str_map(lambda x: x.removesuffix(suffix))
 
-    def _str_extract(
-        self, pat: str | re.Pattern[str], flags: int = 0, expand: bool = True
-    ):
+    def _str_extract(self, pat: str, flags: int = 0, expand: bool = True):
         regex = re.compile(pat, flags=flags)
         na_value = self.dtype.na_value  # type: ignore[attr-defined]
 
@@ -534,6 +534,3 @@ class ObjectStringArrayMixin:
                 return empty_row
 
         return [f(val) for val in np.asarray(self)]
-
-    def _str_zfill(self, width: int):
-        return self._str_map(lambda x: x.zfill(width))

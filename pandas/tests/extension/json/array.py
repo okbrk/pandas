@@ -41,10 +41,7 @@ from pandas.api.extensions import (
     ExtensionArray,
     ExtensionDtype,
 )
-from pandas.core.indexers import (
-    getitem_returns_view,
-    unpack_tuple_and_ellipses,
-)
+from pandas.core.indexers import unpack_tuple_and_ellipses
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -57,7 +54,8 @@ class JSONDtype(ExtensionDtype):
     name = "json"
     na_value: Mapping[str, Any] = UserDict()
 
-    def construct_array_type(self) -> type_t[JSONArray]:
+    @classmethod
+    def construct_array_type(cls) -> type_t[JSONArray]:
         """
         Return the array type associated with this dtype.
 
@@ -93,16 +91,6 @@ class JSONArray(ExtensionArray):
     def _from_factorized(cls, values, original):
         return cls([UserDict(x) for x in values if x != ()])
 
-    def _cast_pointwise_result(self, values):
-        try:
-            return type(self)._from_sequence(values, dtype=self.dtype)
-        except (ValueError, TypeError):
-            # TODO replace with public function
-            from pandas._libs import lib
-
-            values = construct_1d_object_array_from_listlike(values)
-            return lib.maybe_convert_objects(values, convert_non_numeric=True)
-
     def __getitem__(self, item):
         if isinstance(item, tuple):
             item = unpack_tuple_and_ellipses(item)
@@ -111,15 +99,10 @@ class JSONArray(ExtensionArray):
             return self.data[item]
         elif isinstance(item, slice) and item == slice(None):
             # Make sure we get a view
-            result = type(self)(self.data)
-            result._readonly = self._readonly
-            return result
+            return type(self)(self.data)
         elif isinstance(item, slice):
             # slice
-            result = type(self)(self.data[item])
-            if getitem_returns_view(self, item):
-                result._readonly = self._readonly
-            return result
+            return type(self)(self.data[item])
         elif not is_list_like(item):
             # e.g. "foo" or 2.5
             # exception message copied from numpy
@@ -131,33 +114,27 @@ class JSONArray(ExtensionArray):
             item = pd.api.indexers.check_array_indexer(self, item)
             if is_bool_dtype(item.dtype):
                 return type(self)._from_sequence(
-                    [x for x, m in zip(self, item, strict=True) if m], dtype=self.dtype
+                    [x for x, m in zip(self, item) if m], dtype=self.dtype
                 )
             # integer
             return type(self)([self.data[i] for i in item])
 
     def __setitem__(self, key, value) -> None:
-        if self._readonly:
-            raise ValueError("Cannot modify read-only array")
-
         if isinstance(key, numbers.Integral):
             self.data[key] = value
         else:
-            if isinstance(key, slice):
-                key = range(*key.indices(len(self)))
-
             if not isinstance(value, (type(self), abc.Sequence)):
                 # broadcast value
                 value = itertools.cycle([value])
 
             if isinstance(key, np.ndarray) and key.dtype == "bool":
                 # masking
-                for i, (k, v) in enumerate(zip(key, value, strict=False)):
+                for i, (k, v) in enumerate(zip(key, value)):
                     if k:
                         assert isinstance(v, self.dtype.type)
                         self.data[i] = v
             else:
-                for k, v in zip(key, value, strict=False):
+                for k, v in zip(key, value):
                     assert isinstance(v, self.dtype.type)
                     self.data[k] = v
 
@@ -175,6 +152,7 @@ class JSONArray(ExtensionArray):
             raise ValueError(
                 "Unable to avoid copy while creating an array as requested."
             )
+
         if dtype is None:
             dtype = object
         if dtype == object:
@@ -198,7 +176,8 @@ class JSONArray(ExtensionArray):
         # an ndarary.
         indexer = np.asarray(indexer)
         msg = (
-            "Index is out of bounds or cannot do a non-empty take from an empty array."
+            "Index is out of bounds or cannot do a "
+            "non-empty take from an empty array."
         )
 
         if allow_fill:
@@ -271,7 +250,7 @@ class JSONArray(ExtensionArray):
         return super()._pad_or_backfill(method=method, limit=limit, copy=copy)
 
 
-def make_data(n: int):
+def make_data():
     # TODO: Use a regular dict. See _NDFrameIndexer._setitem_with_indexer
     rng = np.random.default_rng(2)
     return [
@@ -281,5 +260,5 @@ def make_data(n: int):
                 for _ in range(rng.integers(0, 10))
             ]
         )
-        for _ in range(n)
+        for _ in range(100)
     ]

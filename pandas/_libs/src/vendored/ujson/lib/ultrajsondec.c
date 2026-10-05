@@ -50,11 +50,11 @@ https://www.opensource.apple.com/source/tcl/tcl-14/tcl/license.terms
 #include <wchar.h>
 
 #ifndef TRUE
-#  define TRUE 1
-#  define FALSE 0
+#define TRUE 1
+#define FALSE 0
 #endif
 #ifndef NULL
-#  define NULL 0
+#define NULL 0
 #endif
 
 struct DecoderState {
@@ -135,7 +135,7 @@ JSOBJ FASTCALL_MSVC decode_numeric(struct DecoderState *ds) {
   } else if (*(offset) == '-') {
     offset++;
     intNeg = -1;
-    overflowLimit = (JSUINT64)LLONG_MIN;
+    overflowLimit = LLONG_MIN;
     if (*(offset) == 'I') {
       goto DECODE_INF;
     }
@@ -200,9 +200,9 @@ BREAK_INT_LOOP:
   if (intNeg == 1 && (intValue & 0x8000000000000000ULL) != 0)
     return ds->dec->newUnsignedLong(ds->prv, intValue);
   else if ((intValue >> 31))
-    return ds->dec->newLong(ds->prv, (JSINT64)(intValue * (JSUINT64)intNeg));
+    return ds->dec->newLong(ds->prv, (JSINT64)(intValue * (JSINT64)intNeg));
   else
-    return ds->dec->newInt(ds->prv, (JSINT32)(intValue * (JSUINT64)intNeg));
+    return ds->dec->newInt(ds->prv, (JSINT32)(intValue * intNeg));
 
 DECODE_FRACTION:
 
@@ -246,6 +246,7 @@ DECODE_FRACTION:
   }
 
 BREAK_FRC_LOOP:
+  // FIXME: Check for arithmetic overflow here
   ds->lastType = JT_DOUBLE;
   ds->start = offset;
   return ds->dec->newDouble(
@@ -344,6 +345,7 @@ SET_INF_ERROR:
   }
 
 BREAK_EXP_LOOP:
+  // FIXME: Check for arithmetic overflow here
   ds->lastType = JT_DOUBLE;
   ds->start = offset;
   return ds->dec->newDouble(
@@ -823,7 +825,7 @@ JSOBJ FASTCALL_MSVC decode_string(struct DecoderState *ds) {
           case '7':
           case '8':
           case '9':
-            sur[iSur] = (JSUTF16)((sur[iSur] << 4) + (*inputOffset - '0'));
+            sur[iSur] = (sur[iSur] << 4) + (JSUTF16)(*inputOffset - '0');
             break;
 
           case 'a':
@@ -832,7 +834,7 @@ JSOBJ FASTCALL_MSVC decode_string(struct DecoderState *ds) {
           case 'd':
           case 'e':
           case 'f':
-            sur[iSur] = (JSUTF16)((sur[iSur] << 4) + 10 + (*inputOffset - 'a'));
+            sur[iSur] = (sur[iSur] << 4) + 10 + (JSUTF16)(*inputOffset - 'a');
             break;
 
           case 'A':
@@ -841,7 +843,7 @@ JSOBJ FASTCALL_MSVC decode_string(struct DecoderState *ds) {
           case 'D':
           case 'E':
           case 'F':
-            sur[iSur] = (JSUTF16)((sur[iSur] << 4) + 10 + (*inputOffset - 'A'));
+            sur[iSur] = (sur[iSur] << 4) + 10 + (JSUTF16)(*inputOffset - 'A');
             break;
           }
 
@@ -1164,8 +1166,7 @@ JSOBJ JSON_DecodeObject(JSONObjectDecoder *dec, const char *buffer,
                         size_t cbBuffer) {
   /*
   FIXME: Base the size of escBuffer of that of cbBuffer so that the unicode
-  escaping doesn't run into the wall each time
-  (comment also present in upstream ultrajson) */
+  escaping doesn't run into the wall each time */
   char *locale;
   struct DecoderState ds;
   wchar_t escBuffer[(JSON_MAX_STACK_BUFFER_SIZE / sizeof(wchar_t))];

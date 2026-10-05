@@ -11,6 +11,7 @@ import numpy as np
 from pandas.core.dtypes.api import is_list_like
 
 import pandas as pd
+from pandas import Series
 import pandas._testing as tm
 
 if TYPE_CHECKING:
@@ -79,7 +80,7 @@ def _check_data(xp, rs):
     rs_lines = rs.get_lines()
 
     assert len(xp_lines) == len(rs_lines)
-    for xpl, rsl in zip(xp_lines, rs_lines, strict=True):
+    for xpl, rsl in zip(xp_lines, rs_lines):
         xpdata = xpl.get_xydata()
         rsdata = rsl.get_xydata()
         tm.assert_almost_equal(xpdata, rsdata)
@@ -126,7 +127,7 @@ def _get_colors_mapped(series, colors):
     unique = series.unique()
     # unique and colors length can be differed
     # depending on slice value
-    mapped = dict(zip(unique, colors, strict=False))
+    mapped = dict(zip(unique, colors))
     return [mapped[v] for v in series.values]
 
 
@@ -161,7 +162,7 @@ def _check_colors(collections, linecolors=None, facecolors=None, mapping=None):
             linecolors = linecolors[: len(collections)]
 
         assert len(collections) == len(linecolors)
-        for patch, color in zip(collections, linecolors, strict=True):
+        for patch, color in zip(collections, linecolors):
             if isinstance(patch, Line2D):
                 result = patch.get_color()
                 # Line2D may contains string color expression
@@ -180,7 +181,7 @@ def _check_colors(collections, linecolors=None, facecolors=None, mapping=None):
             facecolors = facecolors[: len(collections)]
 
         assert len(collections) == len(facecolors)
-        for patch, color in zip(collections, facecolors, strict=True):
+        for patch, color in zip(collections, facecolors):
             if isinstance(patch, Collection):
                 # returned as list of np.array
                 result = patch.get_facecolor()[0]
@@ -210,7 +211,7 @@ def _check_text_labels(texts, expected):
     else:
         labels = [t.get_text() for t in texts]
         assert len(labels) == len(expected)
-        for label, e in zip(labels, expected, strict=True):
+        for label, e in zip(labels, expected):
             assert label == e
 
 
@@ -405,7 +406,7 @@ def _check_box_return_type(
                 assert isinstance(r, Axes)
             return
 
-        assert isinstance(returned, pd.Series)
+        assert isinstance(returned, Series)
 
         assert sorted(returned.keys()) == sorted(expected_keys)
         for key, value in returned.items():
@@ -494,8 +495,8 @@ def assert_is_valid_plot_return_object(objs) -> None:
     from matplotlib.artist import Artist
     from matplotlib.axes import Axes
 
-    if isinstance(objs, (pd.Series, np.ndarray)):
-        if isinstance(objs, pd.Series):
+    if isinstance(objs, (Series, np.ndarray)):
+        if isinstance(objs, Series):
             objs = objs._values
         for el in objs.reshape(-1):
             msg = (

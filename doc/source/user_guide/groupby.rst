@@ -137,7 +137,7 @@ We could naturally group by either the ``A`` or ``B`` columns, or both:
 
    ``df.groupby('A')`` is just syntactic sugar for ``df.groupby(df['A'])``.
 
-DataFrame groupby always operates along axis 0 (rows). To split by columns, first do
+The above GroupBy will split the DataFrame on its index (rows). To split by columns, first do
 a transpose:
 
 .. ipython::
@@ -237,9 +237,9 @@ The default setting of ``dropna`` argument is ``True`` which means ``NA`` are no
 GroupBy object attributes
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-The ``groups`` attribute of a GroupBy object is a dictionary that maps each
-unique group key to the index labels belonging to that group. In the above
-example:
+The ``groups`` attribute is a dictionary whose keys are the computed unique groups
+and corresponding values are the index labels belonging to each group. In the
+above example we have:
 
 .. ipython:: python
 
@@ -418,7 +418,7 @@ You can also include the grouping columns if you want to operate on them.
 
 .. note::
 
-   The ``groupby`` operation in pandas drops the ``name`` field of the columns Index object
+   The ``groupby`` operation in Pandas drops the ``name`` field of the columns Index object
    after the operation. This change ensures consistency in syntax between different
    column selection methods within groupby operations.
 
@@ -1074,7 +1074,7 @@ missing values with the ``ffill()`` method.
    ).set_index("date")
    df_re
 
-   df_re.groupby("group").resample("1D").ffill()
+   df_re.groupby("group").resample("1D", include_groups=False).ffill()
 
 .. _groupby.filter:
 
@@ -1252,17 +1252,19 @@ the argument ``group_keys`` which defaults to ``True``. Compare
 
 .. ipython:: python
 
-    df.groupby("A", group_keys=True).apply(lambda x: x)
+    df.groupby("A", group_keys=True).apply(lambda x: x, include_groups=False)
 
 with
 
 .. ipython:: python
 
-    df.groupby("A", group_keys=False).apply(lambda x: x)
+    df.groupby("A", group_keys=False).apply(lambda x: x, include_groups=False)
 
 
 Numba accelerated routines
 --------------------------
+
+.. versionadded:: 1.1
 
 If `Numba <https://numba.pydata.org/>`__ is installed as an optional dependency, the ``transform`` and
 ``aggregate`` methods support ``engine='numba'`` and ``engine_kwargs`` arguments.
@@ -1530,8 +1532,8 @@ You may also use slices or lists of slices.
 
 .. ipython:: python
 
-   df.groupby([df.index.year, df.index.month]).nth(slice(1, None))
-   df.groupby([df.index.year, df.index.month]).nth([slice(1, None), slice(None, -1)])
+   df.groupby([df.index.year, df.index.month]).nth[1:]
+   df.groupby([df.index.year, df.index.month]).nth[1:, :-1]
 
 Enumerate group items
 ~~~~~~~~~~~~~~~~~~~~~
@@ -1740,7 +1742,7 @@ column index name will be used as the name of the inserted column:
        result = {"b_sum": x["b"].sum(), "c_mean": x["c"].mean()}
        return pd.Series(result, name="metrics")
 
-   result = df.groupby("a").apply(compute_metrics)
+   result = df.groupby("a").apply(compute_metrics, include_groups=False)
 
    result
 

@@ -2,22 +2,27 @@ from __future__ import annotations
 
 import gzip
 import io
+import pathlib
 import tarfile
 from typing import (
     TYPE_CHECKING,
     Any,
 )
+import uuid
 import zipfile
 
 from pandas.compat._optional import import_optional_dependency
 
 import pandas as pd
-
-from pandas.io.pickle import to_pickle_internal
+from pandas._testing.contexts import ensure_clean
 
 if TYPE_CHECKING:
     from collections.abc import Callable
-    from pathlib import Path
+
+    from pandas._typing import (
+        FilePath,
+        ReadPickleBuffer,
+    )
 
     from pandas import (
         DataFrame,
@@ -28,7 +33,9 @@ if TYPE_CHECKING:
 # File-IO
 
 
-def round_trip_pickle(obj: Any, tmp_path: Path) -> DataFrame | Series:
+def round_trip_pickle(
+    obj: Any, path: FilePath | ReadPickleBuffer | None = None
+) -> DataFrame | Series:
     """
     Pickle an object and then read it again.
 
@@ -36,7 +43,7 @@ def round_trip_pickle(obj: Any, tmp_path: Path) -> DataFrame | Series:
     ----------
     obj : any object
         The object to pickle and then re-read.
-    tmp_path : Path
+    path : str, path object or file-like object, default None
         The path where the pickled object is written and then read.
 
     Returns
@@ -44,13 +51,15 @@ def round_trip_pickle(obj: Any, tmp_path: Path) -> DataFrame | Series:
     pandas object
         The original object that was pickled and then re-read.
     """
-    to_pickle_internal(obj, tmp_path)
-    return pd.read_pickle(tmp_path)
+    _path = path
+    if _path is None:
+        _path = f"__{uuid.uuid4()}__.pickle"
+    with ensure_clean(_path) as temp_path:
+        pd.to_pickle(obj, temp_path)
+        return pd.read_pickle(temp_path)
 
 
-def round_trip_pathlib(
-    writer: Callable[[Path], Any], reader: Callable[[Path], Any], tmp_path: Path
-) -> DataFrame | Series:
+def round_trip_pathlib(writer, reader, path: str | None = None):
     """
     Write an object to file specified by a pathlib.Path and read it back
 
@@ -60,7 +69,7 @@ def round_trip_pathlib(
         IO writing function (e.g. DataFrame.to_csv )
     reader : callable
         IO reading function (e.g. pd.read_csv )
-    tmp_path : Path
+    path : str, default None
         The path where the object is written and then read.
 
     Returns
@@ -68,14 +77,16 @@ def round_trip_pathlib(
     pandas object
         The original object that was serialized and then re-read.
     """
-    writer(tmp_path)
-    obj = reader(tmp_path)
+    Path = pathlib.Path
+    if path is None:
+        path = "___pathlib___"
+    with ensure_clean(path) as path:
+        writer(Path(path))  # type: ignore[arg-type]
+        obj = reader(Path(path))  # type: ignore[arg-type]
     return obj
 
 
-def write_to_compressed(
-    compression: str, path: str, data: bytes, dest: str = "test"
-) -> None:
+def write_to_compressed(compression, path, data, dest: str = "test") -> None:
     """
     Write data to a compressed file.
 
@@ -97,7 +108,7 @@ def write_to_compressed(
     args: tuple[Any, ...] = (data,)
     mode = "wb"
     method = "write"
-    compress_method: Callable[..., Any]
+    compress_method: Callable
 
     if compression == "zip":
         compress_method = zipfile.ZipFile
@@ -127,9 +138,5 @@ def write_to_compressed(
     else:
         raise ValueError(f"Unrecognized compression type: {compression}")
 
-    # error: No overload variant of "ZipFile" matches argument types "str", "str"
-    # error: No overload variant of "BZ2File" matches argument types "str", "str"
-    # error: Argument "mode" to "TarFile" has incompatible type "str";
-    #  expected "Literal['r', 'a', 'w', 'x']
-    with compress_method(path, mode=mode) as f:  # type: ignore[call-overload, arg-type]
+    with compress_method(path, mode=mode) as f:
         getattr(f, method)(*args)

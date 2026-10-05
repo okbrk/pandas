@@ -14,12 +14,14 @@ from typing import (
     TYPE_CHECKING,
     cast,
 )
-import warnings
 
 import numpy as np
 
-from pandas.errors import Pandas4Warning
-from pandas.util._exceptions import find_stack_level
+from pandas._typing import (
+    DtypeObj,
+    NDFrameT,
+    npt,
+)
 from pandas.util._validators import validate_percentile
 
 from pandas.core.dtypes.common import (
@@ -42,12 +44,6 @@ if TYPE_CHECKING:
         Callable,
         Hashable,
         Sequence,
-    )
-
-    from pandas._typing import (
-        DtypeObj,
-        NDFrameT,
-        npt,
     )
 
     from pandas import (
@@ -88,15 +84,6 @@ def describe_ndframe(
 
     describer: NDFrameDescriberAbstract
     if obj.ndim == 1:
-        if include is not None or exclude is not None:
-            # GH#54193
-            warnings.warn(
-                "The 'include' and 'exclude' arguments are deprecated for "
-                "Series.describe and will be removed in a future version. "
-                "These arguments have no effect on Series and will be removed.",
-                Pandas4Warning,
-                stacklevel=find_stack_level(),
-            )
         describer = SeriesDescriber(
             obj=cast("Series", obj),
         )
@@ -108,7 +95,7 @@ def describe_ndframe(
         )
 
     result = describer.describe(percentiles=percentiles)
-    return cast("NDFrameT", result)
+    return cast(NDFrameT, result)
 
 
 class NDFrameDescriberAbstract(ABC):
@@ -185,7 +172,12 @@ class DataFrameDescriber(NDFrameDescriberAbstract):
             ldesc.append(describe_func(series, percentiles))
 
         col_names = reorder_columns(ldesc)
-        d = concat(ldesc, axis=1, ignore_index=True, sort=False).reindex(col_names)
+        d = concat(
+            [x.reindex(col_names) for x in ldesc],
+            axis=1,
+            ignore_index=True,
+            sort=False,
+        )
         d.columns = data.columns.copy()
         return d
 
@@ -197,8 +189,7 @@ class DataFrameDescriber(NDFrameDescriberAbstract):
             data = self.obj.select_dtypes(include=default_include)
             if len(data.columns) == 0:
                 data = self.obj
-        elif isinstance(self.include, str) and self.include == "all":
-            # isinstance guard so an array-like spec is not compared elementwise
+        elif self.include == "all":
             if self.exclude is not None:
                 msg = "exclude must be None when include is 'all'"
                 raise ValueError(msg)
@@ -208,9 +199,6 @@ class DataFrameDescriber(NDFrameDescriberAbstract):
                 include=self.include,
                 exclude=self.exclude,
             )
-            if len(data.columns) == 0:
-                msg = "No columns match the specified include or exclude data types"
-                raise ValueError(msg)
         return data
 
 
@@ -241,20 +229,12 @@ def describe_numeric_1d(series: Series, percentiles: Sequence[float]) -> Series:
 
     formatted_percentiles = format_percentiles(percentiles)
 
-    if len(percentiles) == 0:
-        quantiles = []
-    else:
-        quantiles = series.quantile(percentiles).tolist()
-
-    stat_index = ["count", "mean", "std", "min", *formatted_percentiles, "max"]
-    d = [
-        series.count(),
-        series.mean(),
-        series.std(),
-        series.min(),
-        *quantiles,
-        series.max(),
-    ]
+    stat_index = ["count", "mean", "std", "min"] + formatted_percentiles + ["max"]
+    d = (
+        [series.count(), series.mean(), series.std(), series.min()]
+        + series.quantile(percentiles).tolist()
+        + [series.max()]
+    )
     # GH#48340 - always return float on non-complex numeric data
     dtype: DtypeObj | None
     if isinstance(series.dtype, ExtensionDtype):
@@ -323,20 +303,18 @@ def describe_timestamp_1d(data: Series, percentiles: Sequence[float]) -> Series:
 
     formatted_percentiles = format_percentiles(percentiles)
 
-    stat_index = ["count", "mean", "min", *formatted_percentiles, "max"]
-    d = [
-        data.count(),
-        data.mean(),
-        data.min(),
-        *data.quantile(percentiles).tolist(),
-        data.max(),
-    ]
+    stat_index = ["count", "mean", "min"] + formatted_percentiles + ["max"]
+    d = (
+        [data.count(), data.mean(), data.min()]
+        + data.quantile(percentiles).tolist()
+        + [data.max()]
+    )
     return Series(d, index=stat_index, name=data.name)
 
 
 def select_describe_func(
     data: Series,
-) -> Callable[..., Series]:
+) -> Callable:
     """Select proper function for describing series based on data type.
 
     Parameters
@@ -370,10 +348,17 @@ def _refine_percentiles(
     if percentiles is None:
         return np.array([0.25, 0.5, 0.75])
 
-    percentiles = np.asarray(percentiles)
+    # explicit conversion of `percentiles` to list
+    percentiles = list(percentiles)
 
     # get them all to be in [0, 1]
     validate_percentile(percentiles)
+
+    # median should always be included
+    if 0.5 not in percentiles:
+        percentiles.append(0.5)
+
+    percentiles = np.asarray(percentiles)
 
     # sort and check for duplicates
     unique_pcts = np.unique(percentiles)

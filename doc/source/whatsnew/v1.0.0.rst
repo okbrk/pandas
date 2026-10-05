@@ -66,15 +66,10 @@ Converting to markdown
 
 We've added :meth:`~DataFrame.to_markdown` for creating a markdown table (:issue:`11052`)
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df = pd.DataFrame({"A": [1, 2, 3], "B": [1, 2, 3]}, index=['a', 'a', 'b'])
-   >>> print(df.to_markdown())
-   |    |   A |   B |
-   |:---|----:|----:|
-   | a  |   1 |   1 |
-   | a  |   2 |   2 |
-   | b  |   3 |   3 |
+   df = pd.DataFrame({"A": [1, 2, 3], "B": [1, 2, 3]}, index=['a', 'a', 'b'])
+   print(df.to_markdown())
 
 Experimental new features
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -97,36 +92,28 @@ data types and the new string data type (:issue:`28095`).
 
 For example, creating a Series using the nullable integer dtype:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> s = pd.Series([1, 2, None], dtype="Int64")
-   >>> s
-   0       1
-   1       2
-   2    <NA>
-   dtype: Int64
-   >>> s[2]
-   <NA>
+    s = pd.Series([1, 2, None], dtype="Int64")
+    s
+    s[2]
 
 Compared to ``np.nan``, ``pd.NA`` behaves differently in certain operations.
 In addition to arithmetic operations, ``pd.NA`` also propagates as "missing"
 or "unknown" in comparison operations:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> np.nan > 1
-   False
-   >>> pd.NA > 1
-   <NA>
+    np.nan > 1
+    pd.NA > 1
 
 For logical operations, ``pd.NA`` follows the rules of the
 `three-valued logic <https://en.wikipedia.org/wiki/Three-valued_logic>`__ (or
 *Kleene logic*). For example:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.NA | True
-   True
+    pd.NA | True
 
 For more, see :ref:`NA section <missing_data.NA>` in the user guide on missing
 data.
@@ -156,49 +143,30 @@ The ``'string'`` extension type solves several issues with object-dtype NumPy ar
    than ``string``.
 
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.Series(['abc', None, 'def'], dtype=pd.StringDtype())
-   0     abc
-   1    <NA>
-   2     def
-   dtype: string
+   pd.Series(['abc', None, 'def'], dtype=pd.StringDtype())
 
 You can use the alias ``"string"`` as well.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> s = pd.Series(['abc', None, 'def'], dtype="string")
-   >>> s
-   0     abc
-   1    <NA>
-   2     def
-   dtype: string
+   s = pd.Series(['abc', None, 'def'], dtype="string")
+   s
 
 The usual string accessor methods work. Where appropriate, the return type
 of the Series or columns of a DataFrame will also have string dtype.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> s.str.upper()
-   0     ABC
-   1    <NA>
-   2     DEF
-   dtype: string
-   >>> s.str.split('b', expand=True).dtypes
-   0    string
-   1    string
-   dtype: object
+   s.str.upper()
+   s.str.split('b', expand=True).dtypes
 
 String accessor methods returning integers will return a value with :class:`Int64Dtype`
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> s.str.count("a")
-   0       1
-   1    <NA>
-   2       0
-   dtype: Int64
+   s.str.count("a")
 
 We recommend explicitly using the ``string`` data type when working with strings.
 See :ref:`text.types` for more.
@@ -215,24 +183,16 @@ type dedicated to boolean data that can hold missing values. The default
 can store missing values as well by keeping track of this in a separate mask.
 (:issue:`29555`, :issue:`30095`, :issue:`31131`)
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.Series([True, False, None], dtype=pd.BooleanDtype())
-   0     True
-   1    False
-   2     <NA>
-   dtype: boolean
+   pd.Series([True, False, None], dtype=pd.BooleanDtype())
 
 You can use the alias ``"boolean"`` as well.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> s = pd.Series([True, False, None], dtype="boolean")
-   >>> s
-   0     True
-   1    False
-   2     <NA>
-   dtype: boolean
+   s = pd.Series([True, False, None], dtype="boolean")
+   s
 
 .. _whatsnew_100.convert_dtypes:
 
@@ -246,35 +206,19 @@ have been introduced. (:issue:`29752`) (:issue:`30929`)
 
 Example:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df = pd.DataFrame({'x': ['abc', None, 'def'],
-   ...                    'y': [1, 2, np.nan],
-   ...                    'z': [True, False, True]})
-   >>> df
-         x    y      z
-   0   abc  1.0   True
-   1  None  2.0  False
-   2   def  NaN   True
-   >>> df.dtypes
-   x     object
-   y    float64
-   z       bool
-   dtype: object
+   df = pd.DataFrame({'x': ['abc', None, 'def'],
+                      'y': [1, 2, np.nan],
+                      'z': [True, False, True]})
+   df
+   df.dtypes
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> converted = df.convert_dtypes()
-   >>> converted
-         x     y      z
-   0   abc     1   True
-   1  <NA>     2  False
-   2   def  <NA>   True
-   >>> converted.dtypes
-   x     string
-   y      Int64
-   z    boolean
-   dtype: object
+   converted = df.convert_dtypes()
+   converted
+   converted.dtypes
 
 This is especially useful after reading in data using readers such as :func:`read_csv`
 and :func:`read_excel`.
@@ -337,31 +281,26 @@ to update the names.
 
 For backwards compatibility, you can still *access* the names via the levels.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> mi = pd.MultiIndex.from_product([[1, 2], ['a', 'b']], names=['x', 'y'])
-   >>> mi.levels[0].name
-   'x'
+   mi = pd.MultiIndex.from_product([[1, 2], ['a', 'b']], names=['x', 'y'])
+   mi.levels[0].name
 
 However, it is no longer possible to *update* the names of the ``MultiIndex``
 via the level.
 
-.. code-block:: pycon
+.. ipython:: python
+   :okexcept:
 
-   >>> mi.levels[0].name = "new name"
-   Traceback (most recent call last):
-       ...
-   RuntimeError: Cannot set name on a level of a MultiIndex. Use 'MultiIndex.set_names' instead.
-   >>> mi.names
-   FrozenList(['x', 'y'])
+   mi.levels[0].name = "new name"
+   mi.names
 
 To update, use ``MultiIndex.set_names``, which returns a new ``MultiIndex``.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> mi2 = mi.set_names("new name", level=0)
-   >>> mi2.names
-   FrozenList(['new name', 'y'])
+   mi2 = mi.set_names("new name", level=0)
+   mi2.names
 
 New repr for :class:`~pandas.arrays.IntervalArray`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -380,12 +319,9 @@ New repr for :class:`~pandas.arrays.IntervalArray`
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.arrays.IntervalArray.from_tuples([(0, 1), (2, 3)])
-   <IntervalArray>
-   [(0, 1], (2, 3]]
-   Length: 2, closed: right, dtype: interval[int64]
+   pd.arrays.IntervalArray.from_tuples([(0, 1), (2, 3)])
 
 ``DataFrame.rename`` now only accepts one positional argument
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -394,6 +330,11 @@ New repr for :class:`~pandas.arrays.IntervalArray`
 to ambiguous or undefined behavior. From pandas 1.0, only the very first argument, which
 maps labels to their new names along the default axis, is allowed to be passed by position
 (:issue:`29136`).
+
+.. ipython:: python
+   :suppress:
+
+   df = pd.DataFrame([[1]])
 
 *pandas 0.25.x*
 
@@ -448,23 +389,17 @@ Note that errors will now be raised when conflicting or potentially ambiguous ar
 You can still change the axis along which the first positional argument is applied by
 supplying the ``axis`` keyword argument.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df.rename({0: 1})
-      0
-   1  1
-   >>> df.rename({0: 1}, axis=1)
-      1
-   0  1
+   df.rename({0: 1})
+   df.rename({0: 1}, axis=1)
 
 If you would like to update both the index and column labels, be sure to use the respective
 keywords.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df.rename(index={0: 1}, columns={0: 2})
-      2
-   1  1
+   df.rename(index={0: 1}, columns={0: 2})
 
 Extended verbose info output for :class:`~pandas.DataFrame`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -490,22 +425,12 @@ Extended verbose info output for :class:`~pandas.DataFrame`
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df = pd.DataFrame({"int_col": [1, 2, 3],
-   ...                    "text_col": ["a", "b", "c"],
-   ...                    "float_col": [0.0, 0.1, 0.2]})
-   >>> df.info(verbose=True)
-   <class 'pandas.core.frame.DataFrame'>
-   RangeIndex: 3 entries, 0 to 2
-   Data columns (total 3 columns):
-    #   Column     Non-Null Count  Dtype
-   ---  ------     --------------  -----
-    0   int_col    3 non-null      int64
-    1   text_col   3 non-null      object
-    2   float_col  3 non-null      float64
-   dtypes: float64(1), int64(1), object(1)
-   memory usage: 200.0+ bytes
+   df = pd.DataFrame({"int_col": [1, 2, 3],
+                      "text_col": ["a", "b", "c"],
+                      "float_col": [0.0, 0.1, 0.2]})
+   df.info(verbose=True)
 
 :meth:`pandas.array` inference changes
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -535,16 +460,10 @@ Extended verbose info output for :class:`~pandas.DataFrame`
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.array(["a", None])
-   <StringArray>
-   ['a', <NA>]
-   Length: 2, dtype: string
-   >>> pd.array([1, None])
-   <IntegerArray>
-   [1, <NA>]
-   Length: 2, dtype: Int64
+   pd.array(["a", None])
+   pd.array([1, None])
 
 As a reminder, you can specify the ``dtype`` to disable all inference.
 
@@ -571,15 +490,11 @@ As a reminder, you can specify the ``dtype`` to disable all inference.
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> a = pd.array([1, 2, None], dtype="Int64")
-   >>> a
-   <IntegerArray>
-   [1, 2, <NA>]
-   Length: 3, dtype: Int64
-   >>> a[2]
-   <NA>
+   a = pd.array([1, 2, None], dtype="Int64")
+   a
+   a[2]
 
 This has a few API-breaking consequences.
 
@@ -599,19 +514,16 @@ will now raise.
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
+   :okexcept:
 
-   >>> np.asarray(a, dtype="float")
-   Traceback (most recent call last):
-       ...
-   ValueError: cannot convert to 'float64'-dtype NumPy array with missing values. Specify an appropriate 'na_value' for this dtype.
+   np.asarray(a, dtype="float")
 
 Use :meth:`arrays.IntegerArray.to_numpy` with an explicit ``na_value`` instead.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> a.to_numpy(dtype="float", na_value=np.nan)
-   array([ 1.,  2., nan])
+   a.to_numpy(dtype="float", na_value=np.nan)
 
 **Reductions can return** ``pd.NA``
 
@@ -629,10 +541,9 @@ will now be ``pd.NA`` instead of ``np.nan`` in presence of missing values
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.Series(a).sum(skipna=False)
-   <NA>
+   pd.Series(a).sum(skipna=False)
 
 **value_counts returns a nullable integer dtype**
 
@@ -649,10 +560,9 @@ integer dtype for the values.
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.Series([2, 1, 1, None], dtype="Int64").value_counts().dtype
-   Int64Dtype()
+   pd.Series([2, 1, 1, None], dtype="Int64").value_counts().dtype
 
 See :ref:`missing_data.NA` for more on the differences between :attr:`pandas.NA`
 and :attr:`numpy.nan`.
@@ -680,13 +590,10 @@ Comparison operations on a :class:`arrays.IntegerArray` now returns a
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> a = pd.array([1, 2, None], dtype="Int64")
-   >>> a > 1
-   <BooleanArray>
-   [False, True, <NA>]
-   Length: 3, dtype: boolean
+   a = pd.array([1, 2, None], dtype="Int64")
+   a > 1
 
 Note that missing values now propagate, rather than always comparing unequal
 like :attr:`numpy.nan`. See :ref:`missing_data.NA` for more.
@@ -707,10 +614,9 @@ When :class:`Categorical` contains ``np.nan``,
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.Categorical([1, 2, np.nan], ordered=True).min()
-   1
+   pd.Categorical([1, 2, np.nan], ordered=True).min()
 
 
 Default dtype of empty :class:`pandas.Series`
@@ -737,14 +643,11 @@ Previously, pandas would attempt to convert the result back to the original dtyp
 inference rules if that was not possible. Now, pandas will only return a result of the original dtype if the
 scalar values in the result are instances of the extension dtype's scalar type.
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df = pd.DataFrame({"A": ['a', 'b']}, dtype='category',
-   ...                   index=pd.date_range('2000', periods=2))
-   >>> df
-               A
-   2000-01-01  a
-   2000-01-02  b
+   df = pd.DataFrame({"A": ['a', 'b']}, dtype='category',
+                     index=pd.date_range('2000', periods=2))
+   df
 
 
 *pandas 0.25.x*
@@ -757,10 +660,9 @@ scalar values in the result are instances of the extension dtype's scalar type.
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df.resample("2D").agg(lambda x: 'a').A.dtype
-   dtype('O')
+   df.resample("2D").agg(lambda x: 'a').A.dtype
 
 This fixes an inconsistency between ``resample`` and ``groupby``.
 This also fixes a potential bug, where the **values** of the result might change
@@ -778,11 +680,9 @@ depending on how the results are cast back to the original dtype.
 
 *pandas 1.0.0*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df.resample("2D").agg(lambda x: 'c')
-               A
-   2000-01-01  c
+   df.resample("2D").agg(lambda x: 'c')
 
 
 .. _whatsnew_100.api_breaking.python:
@@ -1214,7 +1114,7 @@ Numeric
 - Bug in :class:`UInt64Index` precision loss while constructing from a list with values in the ``np.uint64`` range (:issue:`29526`)
 - Bug in :class:`NumericIndex` construction that caused indexing to fail when integers in the ``np.uint64`` range were used (:issue:`28023`)
 - Bug in :class:`NumericIndex` construction that caused :class:`UInt64Index` to be casted to :class:`Float64Index` when integers in the ``np.uint64`` range were used to index a :class:`DataFrame` (:issue:`28279`)
-- Bug in :meth:`Series.interpolate` when using ``method='index'`` with an unsorted index, would previously return incorrect results. (:issue:`21037`)
+- Bug in :meth:`Series.interpolate` when using method=`index` with an unsorted index, would previously return incorrect results. (:issue:`21037`)
 - Bug in :meth:`DataFrame.round` where a :class:`DataFrame` with a :class:`CategoricalIndex` of :class:`IntervalIndex` columns would incorrectly raise a ``TypeError`` (:issue:`30063`)
 - Bug in :meth:`Series.pct_change` and :meth:`DataFrame.pct_change` when there are duplicated indices (:issue:`30463`)
 - Bug in :class:`DataFrame` cumulative operations (e.g. cumsum, cummax) incorrect casting to object-dtype (:issue:`19296`)

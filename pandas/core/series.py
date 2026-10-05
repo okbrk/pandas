@@ -14,12 +14,12 @@ from collections.abc import (
 import functools
 import operator
 import sys
+from textwrap import dedent
 from typing import (
     IO,
     TYPE_CHECKING,
     Any,
     Literal,
-    Self,
     cast,
     overload,
 )
@@ -33,28 +33,24 @@ from pandas._libs import (
     reshape,
 )
 from pandas._libs.lib import is_range_indexer
-from pandas.compat import CHAINED_WARNING_DISABLED
-from pandas.compat._constants import (
-    REF_COUNT,
-    REF_COUNT_METHOD,
-)
+from pandas.compat import PYPY
+from pandas.compat._constants import REF_COUNT
 from pandas.compat._optional import import_optional_dependency
 from pandas.compat.numpy import function as nv
 from pandas.errors import (
     ChainedAssignmentError,
     InvalidIndexError,
-    Pandas4Warning,
 )
 from pandas.errors.cow import (
-    _chained_assignment_method_update_msg,
+    _chained_assignment_method_msg,
     _chained_assignment_msg,
 )
 from pandas.util._decorators import (
+    Appender,
+    Substitution,
     deprecate_nonkeyword_arguments,
+    doc,
     set_module,
-)
-from pandas.util._exceptions import (
-    find_stack_level,
 )
 from pandas.util._validators import (
     validate_ascending,
@@ -69,7 +65,7 @@ from pandas.core.dtypes.cast import (
     find_common_type,
     infer_dtype_from,
     maybe_box_native,
-    maybe_unbox_numpy_scalar,
+    maybe_cast_pointwise_result,
 )
 from pandas.core.dtypes.common import (
     is_dict_like,
@@ -83,10 +79,9 @@ from pandas.core.dtypes.common import (
     validate_all_hashable,
 )
 from pandas.core.dtypes.dtypes import (
-    DatetimeTZDtype,
+    CategoricalDtype,
     ExtensionDtype,
-    IntervalDtype,
-    PeriodDtype,
+    SparseDtype,
 )
 from pandas.core.dtypes.generic import (
     ABCDataFrame,
@@ -117,12 +112,16 @@ from pandas.core.arrays.arrow import (
 )
 from pandas.core.arrays.categorical import CategoricalAccessor
 from pandas.core.arrays.sparse import SparseAccessor
+from pandas.core.arrays.string_ import StringDtype
 from pandas.core.construction import (
     array as pd_array,
     extract_array,
     sanitize_array,
 )
-from pandas.core.generic import NDFrame
+from pandas.core.generic import (
+    NDFrame,
+    make_doc,
+)
 from pandas.core.indexers import (
     disallow_ndim_indexing,
     unpack_1tuple,
@@ -145,6 +144,7 @@ from pandas.core.indexing import (
 )
 from pandas.core.internals import SingleBlockManager
 from pandas.core.methods import selectn
+from pandas.core.shared_docs import _shared_docs
 from pandas.core.sorting import (
     ensure_key_mapped,
     nargsort,
@@ -152,13 +152,11 @@ from pandas.core.sorting import (
 from pandas.core.strings.accessor import StringMethods
 from pandas.core.tools.datetimes import to_datetime
 
-from pandas.io._util import (
-    arrow_table_to_pandas,
-    suppress_pyarrow_values_warning,
-)
 import pandas.io.formats.format as fmt
 from pandas.io.formats.info import (
+    INFO_DOCSTRING,
     SeriesInfo,
+    series_sub_kwargs,
 )
 import pandas.plotting
 
@@ -169,8 +167,6 @@ if TYPE_CHECKING:
         AnyAll,
         AnyArrayLike,
         ArrayLike,
-        ArrowArrayExportable,
-        ArrowStreamExportable,
         Axis,
         AxisInt,
         CorrelationMethod,
@@ -192,10 +188,10 @@ if TYPE_CHECKING:
         ReindexMethod,
         Renamer,
         Scalar,
+        Self,
         SortKind,
         StorageOptions,
         Suffixes,
-        ToTimestampHow,
         ValueKeyFunc,
         WriteBuffer,
         npt,
@@ -205,6 +201,25 @@ if TYPE_CHECKING:
     from pandas.core.groupby.generic import SeriesGroupBy
 
 __all__ = ["Series"]
+
+_shared_doc_kwargs = {
+    "axes": "index",
+    "klass": "Series",
+    "axes_single_arg": "{0 or 'index'}",
+    "axis": """axis : {0 or 'index'}
+        Unused. Parameter needed for compatibility with DataFrame.""",
+    "inplace": """inplace : bool, default False
+        If True, performs operation inplace and returns None.""",
+    "unique": "np.ndarray",
+    "duplicated": "Series",
+    "optional_by": "",
+    "optional_reindex": """
+index : array-like, optional
+    New labels for the index. Preferably an Index object to avoid
+    duplicating data.
+axis : int or str, optional
+    Unused.""",
+}
 
 # ----------------------------------------------------------------------
 # Series class
@@ -245,16 +260,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         Data type for the output Series. If not specified, this will be
         inferred from `data`.
         See the :ref:`user guide <basics.dtypes>` for more usages.
+        If ``data`` is Series then is ignored.
     name : Hashable, default None
         The name to give to the Series.
-    copy : bool, default None
-        Whether to copy input data, only relevant for array, Series, and Index
-        inputs (for other input, e.g. a list, a new array is created anyway).
-        Defaults to True for array input and False for Index/Series.
-        Even when False for Index/Series, a shallow copy of the data is made.
-        Set to False to avoid copying array input at your own risk (if you
-        know the input data won't be modified elsewhere).
-        Set to True to force copying Series/Index input up front.
+    copy : bool, default False
+        Copy input data. Only affects Series or 1d ndarray input. See examples.
 
     See Also
     --------
@@ -264,12 +274,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     Notes
     -----
     Please reference the :ref:`User Guide <basics.series>` for more information.
-
-    NumPy arrays with ``dtype=object`` may be inferred to a more specific dtype
-    (e.g. strings or datetimes) rather than keeping object dtype, similar to
-    passing a Python list. Pass ``dtype=object`` when you need object dtype.
-    The same inference rules apply when building an :class:`Index` from such an
-    array.
 
     Examples
     --------
@@ -347,7 +351,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     __pandas_priority__ = 3000
 
     # Override cache_readonly bc Series is mutable
-    hasnans = property(
+    # error: Incompatible types in assignment (expression has type "property",
+    # base class "IndexOpsMixin" defined the type as "Callable[[IndexOpsMixin], bool]")
+    hasnans = property(  # type: ignore[assignment]
         # error: "Callable[[IndexOpsMixin], bool]" has no attribute "fget"
         base.IndexOpsMixin.hasnans.fget,  # type: ignore[attr-defined]
         doc=base.IndexOpsMixin.hasnans.__doc__,
@@ -378,7 +384,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
                     f"Passing a {type(data).__name__} to {type(self).__name__} "
                     "is deprecated and will raise in a future version. "
                     "Use public APIs instead.",
-                    Pandas4Warning,
+                    DeprecationWarning,
                     stacklevel=2,
                 )
             data = data.copy(deep=False)
@@ -391,7 +397,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             if copy is not False:
                 if dtype is None or astype_is_view(data.dtype, pandas_dtype(dtype)):
                     data = data.copy()
-                    copy = False
         if copy is None:
             copy = False
 
@@ -403,10 +408,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
                     f"Passing a {type(data).__name__} to {type(self).__name__} "
                     "is deprecated and will raise in a future version. "
                     "Use public APIs instead.",
-                    Pandas4Warning,
+                    DeprecationWarning,
                     stacklevel=2,
                 )
-                allow_mgr = True
 
         name = ibase.maybe_extract_name(name, data, type(self))
 
@@ -432,8 +436,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         if isinstance(data, Index):
             if dtype is not None:
                 data = data.astype(dtype)
-            if not copy:
-                refs = data._references
+
+            refs = data._references
+            copy = False
 
         elif isinstance(data, np.ndarray):
             if len(data.dtype):
@@ -449,9 +454,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
                 data = data._mgr.copy(deep=False)
             else:
                 data = data.reindex(index)
+                copy = False
                 data = data._mgr
-                if data._has_no_reference(0):
-                    copy = False
         elif isinstance(data, Mapping):
             data, index = self._init_dict(data, index, dtype)
             dtype = None
@@ -473,7 +477,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
                     f"Passing a {type(data).__name__} to {type(self).__name__} "
                     "is deprecated and will raise in a future version. "
                     "Use public APIs instead.",
-                    Pandas4Warning,
+                    DeprecationWarning,
                     stacklevel=2,
                 )
                 allow_mgr = True
@@ -481,11 +485,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         elif isinstance(data, ExtensionArray):
             pass
         else:
-            if isinstance(data, ABCDataFrame):
-                raise ValueError(
-                    "Cannot construct a Series from a DataFrame. To select a "
-                    "single column, use df.iloc[:, 0]."
-                )
             data = com.maybe_iterable_to_list(data)
             if is_list_like(data) and not len(data) and dtype is None:
                 # GH 29405: Pre-2.0, this defaulted to float.
@@ -501,11 +500,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         # create/copy the manager
         if isinstance(data, SingleBlockManager):
             if dtype is not None:
-                if not astype_is_view(data.dtype, pandas_dtype(dtype)):
-                    copy = False
-                data = data.astype(dtype=dtype)
-            if copy:
-                data = data.copy(deep=True)
+                data = data.astype(dtype=dtype, errors="ignore")
+            elif copy:
+                data = data.copy()
         else:
             data = sanitize_array(data, index, dtype, copy)
             data = SingleBlockManager.from_array(data, index, refs=refs)
@@ -515,10 +512,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         self._set_axis(0, index)
 
     def _init_dict(
-        self,
-        data: Mapping[Hashable, Any],
-        index: Index | None = None,
-        dtype: DtypeObj | None = None,
+        self, data: Mapping, index: Index | None = None, dtype: DtypeObj | None = None
     ):
         """
         Derive the "_mgr" and "index" attributes of a new Series from a
@@ -551,14 +545,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             # fastpath for Series(data=None). Just use broadcasting a scalar
             # instead of reindexing.
             if len(index) or dtype is not None:
-                na_value = na_value_for_dtype(pandas_dtype(dtype), compat=False)
-                # GH#33900, GH#41377 na_value may itself be dict-like (e.g. for a
-                #  nested ExtensionDtype), so broadcast it here rather than passing
-                #  it back through the Series constructor, which would route it to
-                #  _init_dict again and recurse.
-                arr = construct_1d_arraylike_from_scalar(na_value, len(index), dtype)
-                return SingleBlockManager.from_array(arr, index), index
-            values = []
+                values = na_value_for_dtype(pandas_dtype(dtype), compat=False)
+            else:
+                values = []
             keys = index
         else:
             keys, values = default_index(0), []
@@ -578,7 +567,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         Export the pandas Series as an Arrow C stream PyCapsule.
 
         This relies on pyarrow to convert the pandas Series to the Arrow
-        format (and follows the default behavior of ``pyarrow.Array.from_pandas``
+        format (and follows the default behaviour of ``pyarrow.Array.from_pandas``
         in its handling of the index, i.e. to ignore it).
         This conversion is not necessarily zero-copy.
 
@@ -599,8 +588,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             if requested_schema is not None
             else None
         )
-        with suppress_pyarrow_values_warning():
-            ca = pa.array(self, type=type)
+        ca = pa.array(self, type=type)
         if not isinstance(ca, pa.ChunkedArray):
             ca = pa.chunked_array([ca])
         return ca.__arrow_c_stream__()
@@ -613,9 +601,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
     def _constructor_from_mgr(self, mgr, axes):
         ser = Series._from_mgr(mgr, axes=axes)
-        # Use object.__setattr__ to bypass NDFrame.__setattr__ overhead.
-        # _name is not set by NDFrame.__init__, so we initialize it here.
-        object.__setattr__(ser, "_name", None)
+        ser._name = None  # caller is responsible for setting real name
 
         if type(self) is Series:
             # This would also work `if self._constructor is Series`, but
@@ -661,10 +647,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         Return the dtype object of the underlying data.
 
-        This is the dtype of the array backing the Series (or the single dtype
-        for a DataFrame column). For extension types, it returns the
-        corresponding extension dtype.
-
         See Also
         --------
         Series.dtypes : Return the dtype object of the underlying data.
@@ -684,10 +666,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     def dtypes(self) -> DtypeObj:
         """
         Return the dtype object of the underlying data.
-
-        Unlike ``DataFrame.dtypes``, which returns a Series of dtypes for each
-        column, ``Series.dtypes`` returns a single dtype object representing
-        the type of all elements in the Series.
 
         See Also
         --------
@@ -768,19 +746,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
            We recommend using :attr:`Series.array` or
            :meth:`Series.to_numpy`, depending on whether you need
            a reference to the underlying data or a NumPy array.
-           The return type of ``.values`` depends on the dtype: it is a
-           :class:`numpy.ndarray` for some dtypes (for example ``int64``
-           or ``float64``) and an
-           :class:`~pandas.api.extensions.ExtensionArray` for others (for
-           example ``category``, nullable ``Int64``, or string dtypes),
-           which makes it harder to write code that works across dtypes.
-           ``.values`` also converts timezone-aware datetimes to UTC and
-           drops the timezone. :attr:`Series.array` always returns
-           the underlying array as an
-           :class:`~pandas.api.extensions.ExtensionArray`, and
-           :meth:`Series.to_numpy` always returns a :class:`numpy.ndarray`
-           and accepts ``dtype``, ``copy``, and ``na_value`` arguments to
-           control the conversion.
 
         Returns
         -------
@@ -793,74 +758,23 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         Examples
         --------
-        For a Series backed by a NumPy dtype such as ``int64``, ``.values``
-        returns a :class:`numpy.ndarray`:
-
         >>> pd.Series([1, 2, 3]).values
         array([1, 2, 3])
 
-        For extension dtypes such as the default string dtype or
-        ``category``, ``.values`` returns an
-        :class:`~pandas.api.extensions.ExtensionArray` instead, while
-        :meth:`Series.to_numpy` always returns a :class:`numpy.ndarray`:
-
         >>> pd.Series(list("aabc")).values
-        <ArrowStringArray>
-        ['a', 'a', 'b', 'c']
-        Length: 4, dtype: str
-        >>> pd.Series(list("aabc")).to_numpy()
         array(['a', 'a', 'b', 'c'], dtype=object)
 
         >>> pd.Series(list("aabc")).astype("category").values
         ['a', 'a', 'b', 'c']
-        Categories (3, str): ['a', 'b', 'c']
+        Categories (3, object): ['a', 'b', 'c']
 
-        Timezone aware datetime data is converted to UTC and the timezone
-        is dropped, while :attr:`Series.array` preserves the timezone:
+        Timezone aware datetime data is converted to UTC:
 
-        >>> pd.Series(
-        ...     pd.date_range("20130101", periods=3, tz="US/Eastern")
-        ... ).values  # doctest: +SKIP
-        array(['2013-01-01T05:00:00.000000',
-               '2013-01-02T05:00:00.000000',
-               '2013-01-03T05:00:00.000000'], dtype='datetime64[us]')
-        >>> pd.Series(pd.date_range("20130101", periods=3, tz="US/Eastern")).array
-        <DatetimeArray>
-        ['2013-01-01 00:00:00-05:00', '2013-01-02 00:00:00-05:00',
-         '2013-01-03 00:00:00-05:00']
-        Length: 3, dtype: datetime64[us, US/Eastern]
-
-        .. deprecated:: 3.0.0
-            For :class:`DatetimeTZDtype`, :class:`PeriodDtype`, and
-            :class:`IntervalDtype` dtypes, the behavior of ``.values`` returning
-            a lossy or object-dtype result is deprecated. In a future version,
-            ``.values`` will return the underlying ExtensionArray. Use
-            :meth:`Series.to_numpy` or :attr:`Series.array` instead.
+        >>> pd.Series(pd.date_range("20130101", periods=3, tz="US/Eastern")).values
+        array(['2013-01-01T05:00:00.000000000',
+               '2013-01-02T05:00:00.000000000',
+               '2013-01-03T05:00:00.000000000'], dtype='datetime64[ns]')
         """
-        if isinstance(self.dtype, (PeriodDtype, IntervalDtype)):
-            warnings.warn(
-                f"Series.values returning an object-dtype ndarray for "
-                f"{type(self.dtype).__name__} dtype is deprecated. "
-                f"In a future version, this will return the underlying "
-                f"ExtensionArray instead. Use 'Series.to_numpy()' to get a "
-                f"NumPy array, or 'Series.array' to get the ExtensionArray.",
-                Pandas4Warning,
-                stacklevel=2,
-            )
-        elif isinstance(self.dtype, DatetimeTZDtype):
-            warnings.warn(
-                "Series.values returning an ndarray that drops timezone "
-                "information for DatetimeTZDtype is deprecated. "
-                "In a future version, this will return the underlying "
-                "DatetimeArray instead. Use 'Series.dt.tz_convert(None).to_numpy()' "
-                "to get a NumPy array of UTC values, or 'Series.array' to get the "
-                "ExtensionArray.\n"
-                "See https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#whatsnew-310-deprecations-values"
-                " for more details.",
-                Pandas4Warning,
-                # TODO bump this to stacklevel=2 in a future version
-                stacklevel=1,
-            )
         return self._mgr.external_values()
 
     @property
@@ -875,8 +789,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         historical backwards compatibility of the public attribute (e.g. period
         returns object ndarray and datetimetz a datetime64[ns] ndarray for
         ``.values`` while it returns an ExtensionArray for ``._values`` in those
-        cases). This difference is deprecated and will be removed in a future
-        version.
+        cases).
 
         Differs from ``.array`` in that this still returns the numpy array if
         the Block is backed by a numpy array (except for datetime64 and
@@ -902,79 +815,10 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     def _references(self) -> BlockValuesRefs:
         return self._mgr._block.refs
 
+    @Appender(base.IndexOpsMixin.array.__doc__)  # type: ignore[prop-decorator]
     @property
     def array(self) -> ExtensionArray:
-        """
-        The ExtensionArray of the data backing this Series or Index.
-
-        This property provides direct access to the underlying array data of a
-        Series or Index without requiring conversion to a NumPy array. It
-        returns an ExtensionArray, which is the native storage format for
-        pandas extension dtypes.
-
-        Returns
-        -------
-        ExtensionArray
-            An ExtensionArray of the values stored within. For extension
-            types, this is the actual array. For NumPy native types, this
-            is a thin (no copy) wrapper around :class:`numpy.ndarray`.
-
-            ``.array`` differs from ``.values``, which may require converting
-            the data to a different form.
-
-        See Also
-        --------
-        Index.to_numpy : Similar method that always returns a NumPy array.
-        Series.to_numpy : Similar method that always returns a NumPy array.
-
-        Notes
-        -----
-        This table lays out the different array types for each extension
-        dtype within pandas.
-
-        ================== =============================
-        dtype              array type
-        ================== =============================
-        category           Categorical
-        period             PeriodArray
-        interval           IntervalArray
-        IntegerNA          IntegerArray
-        string             StringArray
-        boolean            BooleanArray
-        datetime64[ns, tz] DatetimeArray
-        ================== =============================
-
-        For any 3rd-party extension types, the array type will be an
-        ExtensionArray.
-
-        For all remaining dtypes ``.array`` will be a
-        :class:`arrays.NumpyExtensionArray` wrapping the actual ndarray
-        stored within. If you absolutely need a NumPy array (possibly with
-        copying / coercing data), then use :meth:`Series.to_numpy` instead.
-
-        Examples
-        --------
-        For regular NumPy types like int, and float, a NumpyExtensionArray
-        is returned.
-
-        >>> pd.Series([1, 2, 3]).array
-        <NumpyExtensionArray>
-        [1, 2, 3]
-        Length: 3, dtype: int64
-
-        For extension types, like Categorical, the actual ExtensionArray
-        is returned
-
-        >>> ser = pd.Series(pd.Categorical(["a", "b", "a"]))
-        >>> ser.array
-        ['a', 'b', 'a']
-        Categories (2, str): ['a', 'b']
-        """
-        arr = self._mgr.array_values()
-        # TODO decide on read-only https://github.com/pandas-dev/pandas/issues/63099
-        # arr = arr.view()
-        # arr._readonly = True
-        return arr
+        return self._mgr.array_values()
 
     def __len__(self) -> int:
         """
@@ -1063,7 +907,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     # ----------------------------------------------------------------------
     # Indexing Methods
 
-    def _ixs(self, i: int | np.integer, axis: AxisInt = 0) -> Any:
+    def _ixs(self, i: int, axis: AxisInt = 0) -> Any:
         """
         Return the i-th value or values in the Series by location.
 
@@ -1075,15 +919,12 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         -------
         scalar
         """
-        values = self._values
-        return maybe_unbox_numpy_scalar(values[i], object_with_dtype=values)
+        return self._values[i]
 
-    def _slice(
-        self, slobj: slice, axis: AxisInt = 0, new_index: Index | None = None
-    ) -> Series:
+    def _slice(self, slobj: slice, axis: AxisInt = 0) -> Series:
         # axis kwarg is retained for compat with NDFrame method
         #  _slice is *always* positional
-        mgr = self._mgr.get_slice(slobj, axis=axis, new_index=new_index)
+        mgr = self._mgr.get_slice(slobj, axis=axis)
         out = self._constructor_from_mgr(mgr, axes=mgr.axes)
         out._name = self._name
         return out.__finalize__(self)
@@ -1109,7 +950,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         if is_iterator(key):
             key = list(key)
 
-        if is_hashable(key, allow_slice=False):
+        if is_hashable(key) and not isinstance(key, slice):
             # Otherwise index.get_value will raise InvalidIndexError
             try:
                 # For labels that don't resolve as scalars like tuples and frozensets
@@ -1148,7 +989,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         return self.loc[key]
 
-    def _get_values_tuple(self, key: tuple[Any, ...]):
+    def _get_values_tuple(self, key: tuple):
         # mpl hackaround
         if com.any_none(*key):
             # mpl compat if we look up e.g. ser[:, np.newaxis];
@@ -1186,22 +1027,20 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         scalar value
         """
         if takeable:
-            return self._ixs(label)
+            return self._values[label]
 
         # Similar to Index.get_value, but we do not fall back to positional
         loc = self.index.get_loc(label)
 
         if is_integer(loc):
-            return self._ixs(loc)
+            return self._values[loc]
 
         if isinstance(self.index, MultiIndex):
             mi = self.index
             new_values = self._values[loc]
             if len(new_values) == 1 and mi.nlevels == 1:
                 # If more than one level left, we can not return a scalar
-                return maybe_unbox_numpy_scalar(
-                    new_values[0], object_with_dtype=new_values
-                )
+                return new_values[0]
 
             new_index = mi[loc]
             new_index = maybe_droplevels(new_index, label)
@@ -1216,15 +1055,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             return self.iloc[loc]
 
     def __setitem__(self, key, value) -> None:
-        if not CHAINED_WARNING_DISABLED:
-            # the cheaper opcode check is deliberately last: on Python 3.14
-            # a plain `df[col] = value` reaches the refcount check, and
-            # is_local_in_caller_frame already short-circuits it there
-            if (
-                sys.getrefcount(self) <= REF_COUNT
-                and not com.is_local_in_caller_frame(self)
-                and com.is_setitem_syntax_in_caller_frame()
-            ):
+        if not PYPY:
+            if sys.getrefcount(self) <= 3:
                 warnings.warn(
                     _chained_assignment_msg, ChainedAssignmentError, stacklevel=2
                 )
@@ -1249,7 +1081,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         except (TypeError, ValueError, LossySetitemError):
             # The key was OK, but we cannot set the value losslessly
-            indexer = self.index.get_loc(key)  # type: ignore[assignment]
+            indexer = self.index.get_loc(key)
             self._set_values(indexer, value)
 
         except InvalidIndexError as err:
@@ -1342,13 +1174,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
                 # set using a non-recursive method
                 self.loc[label] = value
                 return
-            except InvalidIndexError as ii_err:
-                # GH#51866: get_loc raises InvalidIndexError when label is not
-                #  a scalar (e.g. a boolean mask, array, or list). .at only
-                #  supports scalar label access.
-                raise InvalidIndexError(
-                    ".at-based indexing can only have scalar indexers; use .loc instead"
-                ) from ii_err
         else:
             loc = label
 
@@ -1390,7 +1215,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         0    a
         1    b
         2    c
-        dtype: str
+        dtype: object
         >>> s.repeat(2)
         0    a
         0    a
@@ -1398,7 +1223,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         1    b
         2    c
         2    c
-        dtype: str
+        dtype: object
         >>> s.repeat([1, 2, 3])
         0    a
         1    b
@@ -1406,7 +1231,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         2    c
         2    c
         2    c
-        dtype: str
+        dtype: object
         """
         nv.validate_repeat((), {"axis": axis})
         new_index = self.index.repeat(repeats)
@@ -1454,7 +1279,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         *,
         drop: bool = False,
         name: Level = lib.no_default,
-        inplace: bool | lib.NoDefault = lib.no_default,
+        inplace: bool = False,
         allow_duplicates: bool = False,
     ) -> DataFrame | Series | None:
         """
@@ -1478,16 +1303,10 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             when `drop` is True.
         inplace : bool, default False
             Modify the Series in place (do not create a new object).
-
-            .. deprecated:: 3.1.0
-
-                This keyword is deprecated and will be removed in pandas 4.0.
-                See the `whatsnew note on PDEP-8
-                <https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace>`__
-                for more details.
-
         allow_duplicates : bool, default False
             Allow duplicate column labels to be created.
+
+            .. versionadded:: 1.5.0
 
         Returns
         -------
@@ -1569,7 +1388,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         2  baz  one    2
         3  baz  two    3
         """
-        inplace = self._check_inplace_deprecation(inplace, "reset_index")
         inplace = validate_bool_kwarg(inplace, "inplace")
         if drop:
             new_index = default_index(len(self))
@@ -1581,7 +1399,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
                     level_list = level
                 level_list = [self.index._get_level_number(lev) for lev in level_list]
                 if len(level_list) < self.index.nlevels:
-                    new_index = self.index.droplevel(level_list)  # type: ignore[assignment]
+                    new_index = self.index.droplevel(level_list)
 
             if inplace:
                 self.index = new_index
@@ -1651,7 +1469,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     ) -> None: ...
 
     @deprecate_nonkeyword_arguments(
-        Pandas4Warning, allowed_args=["self", "buf"], name="to_string"
+        version="4.0", allowed_args=["self", "buf"], name="to_string"
     )
     def to_string(
         self,
@@ -1669,23 +1487,19 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         Render a string representation of the Series.
 
-        Produces a human-readable text format of the Series, including
-        optional display of the index, data types, name, and length.
-        The output can be written to a buffer or returned as a string.
-
         Parameters
         ----------
         buf : StringIO-like, optional
             Buffer to write to.
-        na_rep : str, default 'NaN'
-            String representation of NaN to use.
+        na_rep : str, optional
+            String representation of NaN to use, default 'NaN'.
         float_format : one-parameter function, optional
             Formatter function to apply to columns' elements if they are
             floats, default None.
         header : bool, default True
             Add the Series header (index name).
-        index : bool, default True
-            Add index (row) labels.
+        index : bool, optional
+            Add index (row) labels, default True.
         length : bool, default False
             Add the Series length.
         dtype : bool, default False
@@ -1740,11 +1554,12 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         if buf is None:
             return result
-        elif hasattr(buf, "write"):
-            buf.write(result)
         else:
-            with open(buf, "w", encoding="utf-8") as f:
-                f.write(result)
+            if hasattr(buf, "write"):
+                buf.write(result)
+            else:
+                with open(buf, "w", encoding="utf-8") as f:
+                    f.write(result)
         return None
 
     @overload
@@ -1780,62 +1595,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         **kwargs,
     ) -> str | None: ...
 
-    @deprecate_nonkeyword_arguments(
-        Pandas4Warning, allowed_args=["self", "buf"], name="to_markdown"
-    )
-    def to_markdown(
-        self,
-        buf: IO[str] | None = None,
-        mode: str = "wt",
-        index: bool = True,
-        storage_options: StorageOptions | None = None,
-        **kwargs,
-    ) -> str | None:
-        """
-        Print Series in Markdown-friendly format.
-
-        Converts the Series to a Markdown table representation using the
-        `tabulate <https://pypi.org/project/tabulate>`_ package. The output
-        can be written to a buffer or returned as a string.
-
-        Parameters
-        ----------
-        buf : str, Path or StringIO-like, optional, default None
-            Buffer to write to. If None, the output is returned as a string.
-        mode : str, optional
-            Mode in which file is opened, "wt" by default.
-        index : bool, optional, default True
-            Add index (row) labels.
-
-        storage_options : dict, optional
-            Extra options that make sense for a particular storage connection, e.g.
-            host, port, username, password, etc. For HTTP(S) URLs the key-value pairs
-            are forwarded to ``urllib.request.Request`` as header options. For other
-            URLs (e.g. starting with "s3://", and "gcs://") the key-value pairs are
-            forwarded to ``fsspec.open``. Please see ``fsspec`` and ``urllib`` for more
-            details, and for more examples on storage options refer `here
-            <https://pandas.pydata.org/docs/user_guide/io.html?
-            highlight=storage_options#reading-writing-remote-files>`_.
-
-        **kwargs
-            These parameters will be passed to `tabulate \
-                <https://pypi.org/project/tabulate>`_.
-
-        Returns
-        -------
-        str
-            Series in Markdown-friendly format.
-
-        See Also
-        --------
-        Series.to_frame : Rrite a text representation of object to the system clipboard.
-        Series.to_latex : Render Series to LaTeX-formatted table.
-
-        Notes
-        -----
-        Requires the `tabulate <https://pypi.org/project/tabulate>`_ package.
-
-        Examples
+    @doc(
+        klass=_shared_doc_kwargs["klass"],
+        storage_options=_shared_docs["storage_options"],
+        examples=dedent(
+            """Examples
             --------
             >>> s = pd.Series(["elk", "pig", "dog", "quetzal"], name="animal")
             >>> print(s.to_markdown())
@@ -1859,7 +1623,53 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             |  2 | dog      |
             +----+----------+
             |  3 | quetzal  |
-            +----+----------+
+            +----+----------+"""
+        ),
+    )
+    @deprecate_nonkeyword_arguments(
+        version="4.0", allowed_args=["self", "buf"], name="to_markdown"
+    )
+    def to_markdown(
+        self,
+        buf: IO[str] | None = None,
+        mode: str = "wt",
+        index: bool = True,
+        storage_options: StorageOptions | None = None,
+        **kwargs,
+    ) -> str | None:
+        """
+        Print {klass} in Markdown-friendly format.
+
+        Parameters
+        ----------
+        buf : str, Path or StringIO-like, optional, default None
+            Buffer to write to. If None, the output is returned as a string.
+        mode : str, optional
+            Mode in which file is opened, "wt" by default.
+        index : bool, optional, default True
+            Add index (row) labels.
+
+        {storage_options}
+
+        **kwargs
+            These parameters will be passed to `tabulate \
+                <https://pypi.org/project/tabulate>`_.
+
+        Returns
+        -------
+        str
+            {klass} in Markdown-friendly format.
+
+        See Also
+        --------
+        Series.to_frame : Rrite a text representation of object to the system clipboard.
+        Series.to_latex : Render Series to LaTeX-formatted table.
+
+        Notes
+        -----
+        Requires the `tabulate <https://pypi.org/project/tabulate>`_ package.
+
+        {examples}
         """
         return self.to_frame().to_markdown(
             buf, mode=mode, index=index, storage_options=storage_options, **kwargs
@@ -1894,7 +1704,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         Index : 1, Value : B
         Index : 2, Value : C
         """
-        return zip(iter(self.index), iter(self), strict=True)
+        return zip(iter(self.index), iter(self))
 
     # ----------------------------------------------------------------------
     # Misc public methods
@@ -1902,9 +1712,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     def keys(self) -> Index:
         """
         Return alias for index.
-
-        This method provides dictionary-like compatibility by returning the
-        index of the Series, analogous to the keys of a dictionary.
 
         Returns
         -------
@@ -1929,7 +1736,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     ) -> MutableMappingT: ...
 
     @overload
-    def to_dict(self, *, into: type[dict[Any, Any]] = ...) -> dict[Any, Any]: ...
+    def to_dict(self, *, into: type[dict] = ...) -> dict: ...
 
     # error: Incompatible default for argument "into" (default has type "type[
     # dict[Any, Any]]", argument has type "type[MutableMappingT] | MutableMappingT")
@@ -1940,10 +1747,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     ) -> MutableMappingT:
         """
         Convert Series to {label -> value} dict or dict-like object.
-
-        The resulting dict-like object maps each index label to its
-        corresponding value. A custom ``MutableMapping`` subclass can
-        be specified via the ``into`` parameter.
 
         Parameters
         ----------
@@ -1971,7 +1774,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         {0: 1, 1: 2, 2: 3, 3: 4}
         >>> from collections import OrderedDict, defaultdict
         >>> s.to_dict(into=OrderedDict)
-        OrderedDict({0: 1, 1: 2, 2: 3, 3: 4})
+        OrderedDict([(0, 1), (1, 2), (2, 3), (3, 4)])
         >>> dd = defaultdict(list)
         >>> s.to_dict(into=dd)
         defaultdict(<class 'list'>, {0: 1, 1: 2, 2: 3, 3: 4})
@@ -1989,10 +1792,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     def to_frame(self, name: Hashable = lib.no_default) -> DataFrame:
         """
         Convert Series to DataFrame.
-
-        The resulting DataFrame contains a single column. The name of the
-        column can be set using the ``name`` parameter; otherwise it
-        defaults to the Series' name.
 
         Parameters
         ----------
@@ -2033,78 +1832,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         df = self._constructor_expanddim_from_mgr(mgr, axes=mgr.axes)
         return df.__finalize__(self, method="to_frame")
 
-    @classmethod
-    def from_arrow(cls, data: ArrowArrayExportable | ArrowStreamExportable) -> Series:
-        """
-        Construct a Series from an array-like Arrow object.
-
-        This function accepts any Arrow-compatible array-like object implementing
-        the `Arrow PyCapsule Protocol`_ (i.e. having an ``__arrow_c_array__``
-        or ``__arrow_c_stream__`` method).
-
-        This function currently relies on ``pyarrow`` to convert the object
-        in Arrow format to pandas.
-
-        .. _Arrow PyCapsule Protocol: https://arrow.apache.org/docs/format/CDataInterface/PyCapsuleInterface.html
-
-        .. versionadded:: 3.0
-
-        Parameters
-        ----------
-        data : pyarrow.Array or Arrow-compatible object
-            Any array-like object implementing the Arrow PyCapsule Protocol
-            (i.e. has an ``__arrow_c_array__`` or ``__arrow_c_stream__``
-            method).
-
-        Returns
-        -------
-        Series
-
-        See Also
-        --------
-        DataFrame.from_arrow : Construct a DataFrame from an Arrow object.
-
-        Examples
-        --------
-        >>> import pyarrow as pa
-        >>> arrow_array = pa.array([1, 2, 3])
-        >>> pd.Series.from_arrow(arrow_array)
-        0    1
-        1    2
-        2    3
-        dtype: int64
-        """
-        pa = import_optional_dependency("pyarrow", min_version="14.0.0")
-        if not isinstance(data, (pa.Array, pa.ChunkedArray)):
-            if not (
-                hasattr(data, "__arrow_c_array__")
-                or hasattr(data, "__arrow_c_stream__")
-            ):
-                # explicitly test this, because otherwise we would accept variour other
-                # input types through the pa.chunked_array(..) call
-                raise TypeError(
-                    "Expected an Arrow-compatible array-like object (i.e. having an "
-                    "'_arrow_c_array__' or '__arrow_c_stream__' method), got "
-                    f"'{type(data).__name__}' instead."
-                )
-            # using chunked_array() as it works for both arrays and streams
-            pa_array = pa.chunked_array(data)
-        else:
-            pa_array = data
-
-        ser = arrow_table_to_pandas(pa.table({"col": pa_array}))["col"]
-
-        # for pyarrow, preserve to_pandas() behaviour of using a field name
-        name = None
-        try:
-            name = pa_array._name
-        except AttributeError:
-            pass
-        ser.name = name
-
-        return ser
-
-    def _set_name(self, name, inplace: bool = False) -> Series:
+    def _set_name(
+        self, name, inplace: bool = False, deep: bool | None = None
+    ) -> Series:
         """
         Set the Series name.
 
@@ -2119,120 +1849,14 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         ser.name = name
         return ser
 
-    @deprecate_nonkeyword_arguments(
-        Pandas4Warning, allowed_args=["self", "by", "level"], name="groupby"
-    )
-    def groupby(
-        self,
-        by=None,
-        level: IndexLabel | None = None,
-        as_index: bool = True,
-        sort: bool = True,
-        group_keys: bool = True,
-        observed: bool = True,
-        dropna: bool = True,
-    ) -> SeriesGroupBy:
-        """
-        Group Series using a mapper or by a Series of columns.
-
-        A groupby operation involves some combination of splitting the
-        object, applying a function, and combining the results. This can be
-        used to group large amounts of data and compute operations on these
-        groups.
-
-        Parameters
-        ----------
-        by : mapping, function, label, pd.Grouper or list of such
-            Used to determine the groups for the groupby.
-            If ``by`` is a function, it's called on each value of the object's
-            index. If a dict or Series is passed, the Series or dict VALUES
-            will be used to determine the groups (the Series' values are first
-            aligned; see ``.align()`` method). If a list or ndarray of the
-            same length as the Series is passed (see the `groupby user guide
-            <https://pandas.pydata.org/pandas-docs/stable/user_guide/groupby.html#splitting-an-object-into-groups>`_),
-            the values are used as-is to determine the groups. An index level
-            name may also be passed to group by a level of the Series' index.
-            Notice that a tuple is interpreted as a (single) key.
-        level : int, level name, or sequence of such, default None
-            If the axis is a MultiIndex (hierarchical), group by a particular
-            level or levels. Do not specify both ``by`` and ``level``.
-        as_index : bool, default True
-            Return object with group labels as the index. This argument is
-            retained for compatibility with :meth:`DataFrame.groupby` and has
-            no effect on Series.
-        sort : bool, default True
-            Sort group keys. Get better performance by turning this off.
-            Note this does not influence the order of observations within each
-            group. Groupby preserves the order of rows within each group. If False,
-            the groups will appear in the same order as they did in the original
-            Series.
-            This argument has no effect on filtrations (see the `filtrations in the user
-            guide
-            <https://pandas.pydata.org/docs/dev/user_guide/groupby.html#filtration>`_),
-            such as ``head()``, ``tail()``, ``nth()`` and in transformations
-            (see the `transformations in the user guide
-            <https://pandas.pydata.org/docs/dev/user_guide/groupby.html#transformation>`_).
-
-            .. versionchanged:: 2.0.0
-
-                Specifying ``sort=False`` with an ordered categorical grouper will no
-                longer sort the values.
-
-        group_keys : bool, default True
-            When calling apply and the ``by`` argument produces a like-indexed
-            (i.e. :ref:`a transform <groupby.transform>`) result, add group keys to
-            index to identify pieces. By default group keys are not included
-            when the result's index (and column) labels match the inputs, and
-            are included otherwise.
-
-            .. versionchanged:: 2.0.0
-
-               ``group_keys`` now defaults to ``True``.
-
-        observed : bool, default True
-            This only applies if any of the groupers are Categoricals.
-            If True: only show observed values for categorical groupers.
-            If False: show all values for categorical groupers.
-
-            .. versionchanged:: 3.0.0
-
-                The default value is now ``True``.
-
-        dropna : bool, default True
-            If True, and if group keys contain NA values, NA values together
-            with row/column will be dropped.
-            If False, NA values will also be treated as the key in groups.
-
-        Returns
-        -------
-        pandas.api.typing.SeriesGroupBy
-            Returns a groupby object that contains information about the groups.
-
-        See Also
-        --------
-        resample : Convenience method for frequency conversion and resampling
-            of time series.
-
-        Notes
-        -----
-        See the `user guide
-        <https://pandas.pydata.org/docs/dev/user_guide/groupby.html>`__ for more
-        detailed usage and examples, including splitting an object into groups,
-        iterating through groups, selecting a group, aggregation, and more.
-
-        The implementation of groupby is hash-based, meaning in particular that
-        objects that compare as equal will be considered to be in the same group.
-        An exception to this is that pandas has special handling of NA values:
-        any NA values will be collapsed to a single group, regardless of how
-        they compare. See the user guide linked above for more details.
-
+    @Appender(
+        dedent(
+            """
         Examples
         --------
-        >>> ser = pd.Series(
-        ...     [390.0, 350.0, 30.0, 20.0],
-        ...     index=["Falcon", "Falcon", "Parrot", "Parrot"],
-        ...     name="Max Speed",
-        ... )
+        >>> ser = pd.Series([390., 350., 30., 20.],
+        ...                 index=['Falcon', 'Falcon', 'Parrot', 'Parrot'],
+        ...                 name="Max Speed")
         >>> ser
         Falcon    390.0
         Falcon    350.0
@@ -2274,12 +1898,10 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         We can groupby different levels of a hierarchical index
         using the `level` parameter:
 
-        >>> arrays = [
-        ...     ["Falcon", "Falcon", "Parrot", "Parrot"],
-        ...     ["Captive", "Wild", "Captive", "Wild"],
-        ... ]
-        >>> index = pd.MultiIndex.from_arrays(arrays, names=("Animal", "Type"))
-        >>> ser = pd.Series([390.0, 350.0, 30.0, 20.0], index=index, name="Max Speed")
+        >>> arrays = [['Falcon', 'Falcon', 'Parrot', 'Parrot'],
+        ...           ['Captive', 'Wild', 'Captive', 'Wild']]
+        >>> index = pd.MultiIndex.from_arrays(arrays, names=('Animal', 'Type'))
+        >>> ser = pd.Series([390., 350., 30., 20.], index=index, name="Max Speed")
         >>> ser
         Animal  Type
         Falcon  Captive    390.0
@@ -2306,7 +1928,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         We can also choose to include `NA` in group keys or not by defining
         `dropna` parameter, the default setting is `True`.
 
-        >>> ser = pd.Series([1, 2, 3, 3], index=["a", "a", "b", np.nan])
+        >>> ser = pd.Series([1, 2, 3, 3], index=["a", 'a', 'b', np.nan])
         >>> ser.groupby(level=0).sum()
         a    3
         b    3
@@ -2323,8 +1945,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         We can also group by a custom list with NaN values to handle
         missing group labels:
 
-        >>> arrays = ["Falcon", "Falcon", "Parrot", "Parrot"]
-        >>> ser = pd.Series([390.0, 350.0, 30.0, 20.0], index=arrays, name="Max Speed")
+        >>> arrays = ['Falcon', 'Falcon', 'Parrot', 'Parrot']
+        >>> ser = pd.Series([390., 350., 30., 20.], index=arrays, name="Max Speed")
         >>> ser.groupby(["a", "b", "a", np.nan]).mean()
         a    210.0
         b    350.0
@@ -2336,6 +1958,19 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         NaN   20.0
         Name: Max Speed, dtype: float64
         """
+        )
+    )
+    @Appender(_shared_docs["groupby"] % _shared_doc_kwargs)
+    def groupby(
+        self,
+        by=None,
+        level: IndexLabel | None = None,
+        as_index: bool = True,
+        sort: bool = True,
+        group_keys: bool = True,
+        observed: bool = False,
+        dropna: bool = True,
+    ) -> SeriesGroupBy:
         from pandas.core.groupby.generic import SeriesGroupBy
 
         if level is None and by is None:
@@ -2362,9 +1997,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         Return number of non-NA/null observations in the Series.
 
-        This method counts the number of elements that are not missing
-        (i.e., not NaN or None) in the Series.
-
         Returns
         -------
         int
@@ -2380,7 +2012,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         >>> s.count()
         2
         """
-        return maybe_unbox_numpy_scalar(notna(self._values).sum().astype("int64"))
+        return notna(self._values).sum().astype("int64")
 
     def mode(self, dropna: bool = True) -> Series:
         """
@@ -2439,7 +2071,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         # TODO: Add option for bins like value_counts()
         values = self._values
         if isinstance(values, np.ndarray):
-            res_values, _ = algorithms.mode(values, dropna=dropna)
+            res_values = algorithms.mode(values, dropna=dropna)
         else:
             res_values = values._mode(dropna=dropna)
 
@@ -2485,7 +2117,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             * Interval
             * Sparse
             * IntegerNA
-            * String
 
         See Examples section.
 
@@ -2497,26 +2128,26 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         >>> pd.Series([pd.Timestamp("2016-01-01") for _ in range(3)]).unique()
         <DatetimeArray>
         ['2016-01-01 00:00:00']
-        Length: 1, dtype: datetime64[us]
+        Length: 1, dtype: datetime64[s]
 
         >>> pd.Series(
         ...     [pd.Timestamp("2016-01-01", tz="US/Eastern") for _ in range(3)]
         ... ).unique()
         <DatetimeArray>
         ['2016-01-01 00:00:00-05:00']
-        Length: 1, dtype: datetime64[us, US/Eastern]
+        Length: 1, dtype: datetime64[s, US/Eastern]
 
-        A Categorical will return categories in the order of
+        An Categorical will return categories in the order of
         appearance and with the same dtype.
 
         >>> pd.Series(pd.Categorical(list("baabc"))).unique()
         ['b', 'a', 'c']
-        Categories (3, str): ['a', 'b', 'c']
+        Categories (3, object): ['a', 'b', 'c']
         >>> pd.Series(
         ...     pd.Categorical(list("baabc"), categories=list("abc"), ordered=True)
         ... ).unique()
         ['b', 'a', 'c']
-        Categories (3, str): ['a' < 'b' < 'c']
+        Categories (3, object): ['a' < 'b' < 'c']
         """
         return super().unique()
 
@@ -2543,15 +2174,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         self,
         *,
         keep: DropKeep = "first",
-        inplace: bool | lib.NoDefault = lib.no_default,
+        inplace: bool = False,
         ignore_index: bool = False,
     ) -> Series | None:
         """
         Return Series with duplicate values removed.
-
-        This method identifies and removes duplicate values from the Series,
-        keeping the first, last, or none of the duplicate occurrences based
-        on the ``keep`` parameter.
 
         Parameters
         ----------
@@ -2564,13 +2191,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         inplace : bool, default ``False``
             If ``True``, performs operation inplace and returns None.
-
-            .. deprecated:: 3.1.0
-
-                This keyword is deprecated and will be removed in pandas 4.0.
-                See the `whatsnew note on PDEP-8
-                <https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace>`__
-                for more details.
 
         ignore_index : bool, default ``False``
             If ``True``, the resulting axis will be labeled 0, 1, …, n - 1.
@@ -2589,7 +2209,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         Series.duplicated : Related method on Series, indicating duplicate
             Series values.
         Series.unique : Return unique values as an array.
-        Index.duplicated : Indicate duplicate index values.
 
         Examples
         --------
@@ -2605,9 +2224,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         3    beetle
         4     llama
         5     hippo
-        Name: animal, dtype: str
+        Name: animal, dtype: object
 
-        With the 'keep' parameter, the selection behavior of duplicated values
+        With the 'keep' parameter, the selection behaviour of duplicated values
         can be changed. The value 'first' keeps the first occurrence for each
         set of duplicated entries. The default value of keep is 'first'.
 
@@ -2616,7 +2235,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         1       cow
         3    beetle
         5     hippo
-        Name: animal, dtype: str
+        Name: animal, dtype: object
 
         The value 'last' for parameter 'keep' keeps the last occurrence for
         each set of duplicated entries.
@@ -2626,7 +2245,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         3    beetle
         4     llama
         5     hippo
-        Name: animal, dtype: str
+        Name: animal, dtype: object
 
         The value ``False`` for parameter 'keep' discards all sets of
         duplicated entries.
@@ -2635,21 +2254,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         1       cow
         3    beetle
         5     hippo
-        Name: animal, dtype: str
-
-        Only the values are considered, not the index. To drop entries with a
-        duplicate index label, use :meth:`Index.duplicated` with boolean
-        indexing.
-
-        >>> s.index = ["a", "b", "b", "c", "c", "d"]
-        >>> s[~s.index.duplicated(keep="first")]
-        a     llama
-        b       cow
-        c    beetle
-        d     hippo
-        Name: animal, dtype: str
+        Name: animal, dtype: object
         """
-        inplace = self._check_inplace_deprecation(inplace, "drop_duplicates")
         inplace = validate_bool_kwarg(inplace, "inplace")
         result = super().drop_duplicates(keep=keep)
 
@@ -2667,9 +2273,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         Indicate duplicate Series values.
 
         Duplicated values are indicated as ``True`` values in the resulting
-        Series. Values are considered duplicated when the same value appears
-        more than once. Either all duplicated values, all except the first, or
-        all except the last occurrence of duplicated values can be indicated.
+        Series. Either all duplicates, all except the first or all except the
+        last occurrence of duplicates can be indicated.
 
         Parameters
         ----------
@@ -2685,8 +2290,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         Returns
         -------
         Series[bool]
-            Series indicating whether each value is a duplicated value
-            according to ``keep``.
+            Series indicating whether each value has occurred in the
+            preceding values.
 
         See Also
         --------
@@ -2760,7 +2365,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         *args, **kwargs
             Additional arguments and keywords have no effect but might be
             accepted for compatibility with NumPy.
-            See :ref:`gotchas.numpy_kwargs` for more.
 
         Returns
         -------
@@ -2821,7 +2425,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         *args, **kwargs
             Additional arguments and keywords have no effect but might be
             accepted for compatibility with NumPy.
-            See :ref:`gotchas.numpy_kwargs` for more.
 
         Returns
         -------
@@ -2870,10 +2473,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         Round each value in a Series to the given number of decimals.
 
-        This method returns a new Series with each element rounded to the
-        specified number of decimal places using the round-half-to-even
-        strategy.
-
         Parameters
         ----------
         decimals : int, default 0
@@ -2882,7 +2481,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         *args, **kwargs
             Additional arguments and keywords have no effect but might be
             accepted for compatibility with NumPy.
-            See :ref:`gotchas.numpy_kwargs` for more.
 
         Returns
         -------
@@ -2912,18 +2510,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         4    3.0
         dtype: float64
         """
-
         nv.validate_round(args, kwargs)
-
-        if len(self) == 0:
-            return self.copy()
-
-        if is_object_dtype(self.dtype):
-            values = self._values
-            result = lib.map_infer(values, lambda x: round(x, decimals), convert=False)
-            return self._constructor(result, index=self.index, copy=False).__finalize__(
-                self, method="round"
-            )
         new_mgr = self._mgr.round(decimals=decimals)
         return self._constructor_from_mgr(new_mgr, axes=new_mgr.axes).__finalize__(
             self, method="round"
@@ -2955,10 +2542,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     ) -> float | Series:
         """
         Return value at the given quantile.
-
-        This method computes the value below which a given fraction of the
-        data falls. When multiple quantiles are requested, a Series indexed
-        by the quantile values is returned.
 
         Parameters
         ----------
@@ -3101,11 +2684,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         other_values = other.to_numpy(dtype=float, na_value=np.nan, copy=False)
 
         if method in ["pearson", "spearman", "kendall"] or callable(method):
-            result = nanops.nancorr(
+            return nanops.nancorr(
                 this_values, other_values, method=method, min_periods=min_periods
             )
-            result = maybe_unbox_numpy_scalar(result, object_with_dtype=self)
-            return result
 
         raise ValueError(
             "method must be either 'pearson', "
@@ -3157,155 +2738,16 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             return np.nan
         this_values = this.to_numpy(dtype=float, na_value=np.nan, copy=False)
         other_values = other.to_numpy(dtype=float, na_value=np.nan, copy=False)
-        result = nanops.nancov(
+        return nanops.nancov(
             this_values, other_values, min_periods=min_periods, ddof=ddof
         )
-        result = maybe_unbox_numpy_scalar(result, object_with_dtype=self)
-        return result
 
-    def describe(
-        self,
-        percentiles=None,
-        include=None,
-        exclude=None,
-    ) -> Series:
-        """
-        Generate descriptive statistics.
-
-        Summarize the central tendency, dispersion, and shape of the
-        Series's distribution, excluding ``NaN`` values. The set of
-        statistics returned depends on the Series's dtype; see Notes.
-
-        Parameters
-        ----------
-        percentiles : list-like of numbers, optional
-            The percentiles to include in the output. All should fall
-            between 0 and 1. The default, ``None``, returns the 25th,
-            50th, and 75th percentiles.
-        include : None
-            Has no effect on Series. Deprecated and will be removed in a
-            future version.
-        exclude : None
-            Has no effect on Series. Deprecated and will be removed in a
-            future version.
-
-        Returns
-        -------
-        Series
-            Summary statistics of the Series.
-
-        See Also
-        --------
-        DataFrame.describe : Generate descriptive statistics of a DataFrame.
-        Series.count : Count of non-NA observations.
-        Series.max : Maximum of the values.
-        Series.min : Minimum of the values.
-        Series.mean : Mean of the values.
-        Series.std : Standard deviation of the observations.
-
-        Notes
-        -----
-        For numeric dtypes, the result's index includes ``count``,
-        ``mean``, ``std``, ``min``, ``max``, and the requested
-        percentiles. By default the lower percentile is ``25`` and the
-        upper is ``75``; the ``50`` percentile is the same as the median.
-
-        For object dtypes (e.g. strings), the result's index includes
-        ``count``, ``unique``, ``top``, and ``freq``. The ``top`` is the
-        most common value and ``freq`` is its count. If multiple values
-        tie for the highest count, ``top`` is chosen arbitrarily from
-        among them.
-
-        For datetime dtypes, the result also includes ``mean`` and the
-        requested percentiles, computed on the underlying timestamps.
-
-        Examples
-        --------
-        A numeric Series.
-
-        >>> s = pd.Series([1, 2, 3])
-        >>> s.describe()
-        count    3.0
-        mean     2.0
-        std      1.0
-        min      1.0
-        25%      1.5
-        50%      2.0
-        75%      2.5
-        max      3.0
-        dtype: float64
-
-        An object Series.
-
-        >>> s = pd.Series(["a", "a", "b", "c"])
-        >>> s.describe()
-        count     4
-        unique    3
-        top       a
-        freq      2
-        dtype: object
-
-        A datetime Series.
-
-        >>> s = pd.Series(
-        ...     [
-        ...         np.datetime64("2000-01-01"),
-        ...         np.datetime64("2010-01-01"),
-        ...         np.datetime64("2010-01-01"),
-        ...     ]
-        ... )
-        >>> s.describe()
-        count                      3
-        mean     2006-09-01 08:00:00
-        min      2000-01-01 00:00:00
-        25%      2004-12-31 12:00:00
-        50%      2010-01-01 00:00:00
-        75%      2010-01-01 00:00:00
-        max      2010-01-01 00:00:00
-        dtype: object
-        """
-        return super().describe(
-            percentiles=percentiles, include=include, exclude=exclude
-        )
-
-    def diff(self, periods: int = 1) -> Series:
-        """
-        First discrete difference of Series elements.
-
-        Calculates the difference of a Series element compared with another
-        element in the Series (default is element in previous row).
-
-        Parameters
-        ----------
-        periods : int, default 1
-            Periods to shift for calculating difference, accepts negative
-            values.
-
-        Returns
-        -------
-        Series
-            First differences of the Series.
-
-        See Also
-        --------
-        Series.pct_change: Percent change over given number of periods.
-        Series.shift: Shift index by desired number of periods with an
-            optional time freq.
-        DataFrame.diff: First discrete difference of object.
-
-        Notes
-        -----
-        Equivalent to ``self - self.shift(periods)``, except that boolean
-        dtypes use :meth:`operator.xor` rather than :meth:`operator.sub`; the
-        result dtype follows from that operation.
-
-        In particular, because the leading ``periods`` positions are filled
-        with a missing value, NumPy integer dtypes are cast to floating and
-        NumPy ``bool`` to ``object``.
-
-        Examples
-        --------
-
+    @doc(
+        klass="Series",
+        extra_params="",
+        other_klass="DataFrame",
+        examples=dedent(
+            """
         Difference with previous row
 
         >>> s = pd.Series([1, 1, 2, 3, 5, 8])
@@ -3346,15 +2788,52 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         >>> s.diff()
         0      NaN
         1    255.0
-        dtype: float64
+        dtype: float64"""
+        ),
+    )
+    def diff(self, periods: int = 1) -> Series:
+        """
+        First discrete difference of element.
+
+        Calculates the difference of a {klass} element compared with another
+        element in the {klass} (default is element in previous row).
+
+        Parameters
+        ----------
+        periods : int, default 1
+            Periods to shift for calculating difference, accepts negative
+            values.
+        {extra_params}
+        Returns
+        -------
+        {klass}
+            First differences of the Series.
+
+        See Also
+        --------
+        {klass}.pct_change: Percent change over given number of periods.
+        {klass}.shift: Shift index by desired number of periods with an
+            optional time freq.
+        {other_klass}.diff: First discrete difference of object.
+
+        Notes
+        -----
+        For boolean dtypes, this uses :meth:`operator.xor` rather than
+        :meth:`operator.sub`.
+        The result is calculated according to current dtype in {klass},
+        however dtype of the result is always float64.
+
+        Examples
+        --------
+        {examples}
         """
         if not lib.is_integer(periods):
             if not (is_float(periods) and periods.is_integer()):
                 raise ValueError("periods must be an integer")
         result = algorithms.diff(self._values, periods)
-        return self._constructor(
-            result, index=self.index.view(), copy=False
-        ).__finalize__(self, method="diff")
+        return self._constructor(result, index=self.index, copy=False).__finalize__(
+            self, method="diff"
+        )
 
     def autocorr(self, lag: int = 1) -> float:
         """
@@ -3399,7 +2878,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         >>> s.autocorr()
         nan
         """
-        return self.corr(cast("Series", self.shift(lag)))
+        return self.corr(cast(Series, self.shift(lag)))
 
     def dot(self, other: AnyArrayLike | DataFrame) -> Series | np.ndarray:
         """
@@ -3469,17 +2948,15 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
                 )
 
         if isinstance(other, ABCDataFrame):
-            common_type = find_common_type([self.dtypes, *list(other.dtypes)])
             return self._constructor(
-                np.dot(lvals, rvals), index=other.columns, copy=False, dtype=common_type
+                np.dot(lvals, rvals), index=other.columns, copy=False
             ).__finalize__(self, method="dot")
         elif isinstance(other, Series):
-            result = np.dot(lvals, rvals)
+            return np.dot(lvals, rvals)
         elif isinstance(rvals, np.ndarray):
-            result = np.dot(lvals, rvals)
+            return np.dot(lvals, rvals)
         else:  # pragma: no cover
             raise TypeError(f"unsupported type: {type(other)}")
-        return maybe_unbox_numpy_scalar(result, object_with_dtype=self)
 
     def __matmul__(self, other):
         """
@@ -3493,6 +2970,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         return self.dot(np.transpose(other))
 
+    @doc(base.IndexOpsMixin.searchsorted, klass="Series")
     # Signature of "searchsorted" incompatible with supertype "IndexOpsMixin"
     def searchsorted(  # type: ignore[override]
         self,
@@ -3500,140 +2978,32 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         side: Literal["left", "right"] = "left",
         sorter: NumpySorter | None = None,
     ) -> npt.NDArray[np.intp] | np.intp:
-        """
-        Find indices where elements should be inserted to maintain order.
-
-        Find the indices into a sorted Series `self` such that, if the
-        corresponding elements in `value` were inserted before the indices,
-        the order of `self` would be preserved.
-
-        .. note::
-            The Series *must* be monotonically sorted, otherwise
-            wrong locations will likely be returned. Pandas does *not*
-            check this for you.
-
-        Parameters
-        ----------
-        value : array-like or scalar
-            Values to insert into `self`.
-        side : {'left', 'right'}, optional
-            If 'left', the index of the first suitable location found is given.
-            If 'right', return the last such index.  If there is no suitable
-            index, return either 0 or N (where N is the length of `self`).
-        sorter : 1-D array-like, optional
-            Optional array of integer indices that sort `self` into ascending
-            order. They are typically the result of ``np.argsort``.
-
-        Returns
-        -------
-        int or array of int
-            A scalar or array of insertion points with the
-            same shape as `value`.
-
-        See Also
-        --------
-        sort_values : Sort by the values along either axis.
-        numpy.searchsorted : Similar method from NumPy.
-
-        Notes
-        -----
-        Binary search is used to find the required insertion points.
-
-        Examples
-        --------
-        >>> ser = pd.Series([1, 2, 3])
-        >>> ser
-        0    1
-        1    2
-        2    3
-        dtype: int64
-        >>> ser.searchsorted(4)
-        3
-        >>> ser.searchsorted([0, 4])
-        array([0, 3])
-        >>> ser.searchsorted([1, 3], side="left")
-        array([0, 2])
-        >>> ser.searchsorted([1, 3], side="right")
-        array([1, 3])
-        >>> ser = pd.Series(pd.to_datetime(["3/11/2000", "3/12/2000", "3/13/2000"]))
-        >>> ser
-        0   2000-03-11
-        1   2000-03-12
-        2   2000-03-13
-        dtype: datetime64[us]
-        >>> ser.searchsorted("3/14/2000")
-        3
-        >>> ser = pd.Categorical(
-        ...     ["apple", "bread", "bread", "cheese", "milk"], ordered=True
-        ... )
-        >>> ser
-        ['apple', 'bread', 'bread', 'cheese', 'milk']
-        Categories (4, str): ['apple' < 'bread' < 'cheese' < 'milk']
-        >>> ser.searchsorted("bread")
-        np.int64(1)
-        >>> ser.searchsorted(["bread"], side="right")
-        array([3])
-
-        If the values are not monotonically sorted, wrong locations
-        may be returned:
-
-        >>> ser = pd.Series([2, 1, 3])
-        >>> ser
-        0    2
-        1    1
-        2    3
-        dtype: int64
-        >>> ser.searchsorted(1)  # doctest: +SKIP
-        0  # wrong result, correct would be 1
-        """
         return base.IndexOpsMixin.searchsorted(self, value, side=side, sorter=sorter)
 
     # -------------------------------------------------------------------
     # Combination
 
-    def _append_internal(self, to_append: Series, ignore_index: bool = False) -> Series:
+    def _append(
+        self, to_append, ignore_index: bool = False, verify_integrity: bool = False
+    ):
         from pandas.core.reshape.concat import concat
 
-        return concat([self, to_append], ignore_index=ignore_index)
+        if isinstance(to_append, (list, tuple)):
+            to_concat = [self]
+            to_concat.extend(to_append)
+        else:
+            to_concat = [self, to_append]
+        if any(isinstance(x, (ABCDataFrame,)) for x in to_concat[1:]):
+            msg = "to_append should be a Series or list/tuple of Series, got DataFrame"
+            raise TypeError(msg)
+        return concat(
+            to_concat, ignore_index=ignore_index, verify_integrity=verify_integrity
+        )
 
-    def compare(
-        self,
-        other: Series,
-        align_axis: Axis = 1,
-        keep_shape: bool = False,
-        keep_equal: bool = False,
-        result_names: Suffixes = ("self", "other"),
-    ) -> DataFrame | Series:
-        """
-        Compare to another Series and show the differences.
-
-        This method aligns two Series and highlights only the values that
-        differ between them. Equal values are shown as NaN by default.
-
-        Parameters
-        ----------
-        other : Series
-            Object to compare with.
-
-        align_axis : {0 or 'index', 1 or 'columns'}, default 1
-            Determine which axis to align the comparison on.
-
-            * 0, or 'index' : Resulting differences are stacked vertically
-              with rows drawn alternately from self and other.
-            * 1, or 'columns' : Resulting differences are aligned horizontally
-              with columns drawn alternately from self and other.
-
-        keep_shape : bool, default False
-            If true, all rows and columns are kept.
-            Otherwise, only the ones with different values are kept.
-
-        keep_equal : bool, default False
-            If true, the result keeps values that are equal.
-            Otherwise, equal values are shown as NaNs.
-
-        result_names : tuple, default ('self', 'other')
-            Set the dataframes names in the comparison.
-
+    @doc(
+        _shared_docs["compare"],
+        dedent(
+            """
         Returns
         -------
         Series or DataFrame
@@ -3671,7 +3041,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
            other    a
         3  self     d
            other    b
-        dtype: str
+        dtype: object
 
         Keep all original rows
 
@@ -3693,7 +3063,17 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         3    d     b
         4    e     e
         """
-
+        ),
+        klass=_shared_doc_kwargs["klass"],
+    )
+    def compare(
+        self,
+        other: Series,
+        align_axis: Axis = 1,
+        keep_shape: bool = False,
+        keep_equal: bool = False,
+        result_names: Suffixes = ("self", "other"),
+    ) -> DataFrame | Series:
         return super().compare(
             other=other,
             align_axis=align_axis,
@@ -3713,12 +3093,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         Combine the Series and `other` using `func` to perform elementwise
         selection for combined Series.
-        `fill_value` is assumed when value is not present at some index
-        from one of the two Series being combined. The result index is the
-        union of the two indexes. If a label is duplicated, its occurrences
-        are paired in order: the first occurrence in the Series with the first
-        in `other`, the second with the second, and so on; an occurrence with
-        no counterpart is paired with `fill_value`.
+        `fill_value` is assumed when value is missing at some index
+        from one of the two objects being combined.
 
         Parameters
         ----------
@@ -3729,7 +3105,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         fill_value : scalar, optional
             The value to assume when an index is missing from
             one Series or the other. The default specifies to use the
-            appropriate NA value for the underlying dtype of the Series.
+            appropriate NaN value for the underlying dtype of the Series.
 
         Returns
         -------
@@ -3777,51 +3153,20 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         eagle     200.0
         falcon    345.0
         dtype: float64
-
-        Occurrences of a duplicated label are paired in order. Below, the
-        first ``"a"`` in ``s3`` is combined with the ``"a"`` in ``s4``,
-        while the second has no counterpart and is paired with
-        ``fill_value``.
-
-        >>> s3 = pd.Series([1, 2, 3], index=["a", "a", "b"])
-        >>> s4 = pd.Series([10, 20], index=["a", "b"])
-        >>> s3.combine(s4, lambda x, y: x + y, fill_value=0)
-        a    11
-        a     2
-        b    23
-        dtype: int64
         """
         if fill_value is None:
             fill_value = na_value_for_dtype(self.dtype, compat=False)
 
         if isinstance(other, Series):
-            if (
-                isinstance(self.index, MultiIndex)
-                and isinstance(other.index, MultiIndex)
-                and self.index.nlevels != other.index.nlevels
-            ):
-                raise ValueError(
-                    "Cannot combine Series whose MultiIndexes have different "
-                    f"numbers of levels: {self.index.nlevels} and "
-                    f"{other.index.nlevels}"
-                )
+            # If other is a Series, result is based on union of Series,
+            # so do this element by element
             new_index = self.index.union(other.index)
-            if self.index.equals(new_index) and other.index.equals(new_index):
-                lindexer = rindexer = range(len(new_index))
-            elif self.index._index_as_unique and other.index._index_as_unique:
-                lindexer = self.index.get_indexer(new_index).tolist()
-                rindexer = other.index.get_indexer(new_index).tolist()
-            else:
-                lindexer = self.index._pairwise_indexer(new_index).tolist()
-                rindexer = other.index._pairwise_indexer(new_index).tolist()
             new_name = ops.get_op_result_name(self, other)
             new_values = np.empty(len(new_index), dtype=object)
-            lvalues = self._values
-            rvalues = other._values
             with np.errstate(all="ignore"):
-                for i, (li, ri) in enumerate(zip(lindexer, rindexer, strict=True)):
-                    lv = lvalues[li] if li != -1 else fill_value
-                    rv = rvalues[ri] if ri != -1 else fill_value
+                for i, idx in enumerate(new_index):
+                    lv = self.get(idx, fill_value)
+                    rv = other.get(idx, fill_value)
                     new_values[i] = func(lv, rv)
         else:
             # Assume that other is a scalar, so apply the function for
@@ -3832,14 +3177,15 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
                 new_values[:] = [func(lv, other) for lv in self._values]
             new_name = self.name
 
-        res_values = self.array._cast_pointwise_result(new_values)
-        return self._constructor(
-            res_values,
-            dtype=res_values.dtype,
-            index=new_index,
-            name=new_name,
-            copy=False,
+        # try_float=False is to match agg_series
+        npvalues = lib.maybe_convert_objects(new_values, try_float=False)
+        # same_dtype here is a kludge to avoid casting e.g. [True, False] to
+        #  ["True", "False"]
+        same_dtype = isinstance(self.dtype, (StringDtype, CategoricalDtype))
+        res_values = maybe_cast_pointwise_result(
+            npvalues, self.dtype, same_dtype=same_dtype
         )
+        return self._constructor(res_values, index=new_index, name=new_name, copy=False)
 
     def combine_first(self, other) -> Series:
         """
@@ -3890,6 +3236,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         if self.dtype == other.dtype:
             if self.index.equals(other.index):
                 return self.mask(self.isna(), other)
+            elif self._can_hold_na and not isinstance(self.dtype, SparseDtype):
+                this, other = self.align(other, join="outer")
+                return this.mask(this.isna(), other)
 
         new_index = self.index.union(other.index)
 
@@ -3904,21 +3253,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         if this.dtype.kind == "M" and other.dtype.kind != "M":
             # TODO: try to match resos?
             other = to_datetime(other)
-            warnings.warn(
-                # GH#62931
-                "Silently casting non-datetime 'other' to datetime in "
-                "Series.combine_first is deprecated and will be removed "
-                "in a future version. Explicitly cast before calling "
-                "combine_first instead.",
-                Pandas4Warning,
-                stacklevel=find_stack_level(),
-            )
-
         combined = concat([this, other])
         combined = combined.reindex(new_index)
         return combined.__finalize__(self, method="combine_first")
 
-    def update(self, other: Series | Sequence[Any] | Mapping[Any, Any]) -> None:
+    def update(self, other: Series | Sequence | Mapping) -> None:
         """
         Modify Series in place using values from passed Series.
 
@@ -3952,7 +3291,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         0    d
         1    b
         2    e
-        dtype: str
+        dtype: object
 
         >>> s = pd.Series([1, 2, 3])
         >>> s.update(pd.Series([4, 5, 6, 7, 8]))
@@ -3992,12 +3331,10 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         2    3
         dtype: int64
         """
-        if not CHAINED_WARNING_DISABLED:
-            if sys.getrefcount(
-                self
-            ) <= REF_COUNT_METHOD and not com.is_local_in_caller_frame(self):
+        if not PYPY:
+            if sys.getrefcount(self) <= REF_COUNT:
                 warnings.warn(
-                    _chained_assignment_method_update_msg,
+                    _chained_assignment_method_msg,
                     ChainedAssignmentError,
                     stacklevel=2,
                 )
@@ -4045,7 +3382,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         *,
         axis: Axis = ...,
         ascending: bool | Sequence[bool] = ...,
-        inplace: bool | lib.NoDefault = ...,
+        inplace: bool = ...,
         kind: SortKind = ...,
         na_position: NaPosition = ...,
         ignore_index: bool = ...,
@@ -4057,7 +3394,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         *,
         axis: Axis = 0,
         ascending: bool | Sequence[bool] = True,
-        inplace: bool | lib.NoDefault = lib.no_default,
+        inplace: bool = False,
         kind: SortKind = "quicksort",
         na_position: NaPosition = "last",
         ignore_index: bool = False,
@@ -4077,19 +3414,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             If True, sort values in ascending order, otherwise descending.
         inplace : bool, default False
             If True, perform operation in-place.
-
-            .. deprecated:: 3.1.0
-
-                This keyword is deprecated and will be removed in pandas 4.0.
-                See the `whatsnew note on PDEP-8
-                <https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace>`__
-                for more details.
-
         kind : {'quicksort', 'mergesort', 'heapsort', 'stable'}, default 'quicksort'
             Choice of sorting algorithm. See also :func:`numpy.sort` for more
-            information. The sort order is deterministic for a given input.
-            `mergesort` and `stable` are the only stable algorithms, which preserve
-            the relative order of equal keys.
+            information. 'mergesort' and 'stable' are the only stable  algorithms.
         na_position : {'first' or 'last'}, default 'last'
             Argument 'first' puts NaNs at the beginning, 'last' puts NaNs at
             the end.
@@ -4124,7 +3451,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         4     5.0
         dtype: float64
 
-        Sort values ascending order (default behavior)
+        Sort values ascending order (default behaviour)
 
         >>> s.sort_values(ascending=True)
         1     1.0
@@ -4163,7 +3490,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         2    d
         3    a
         4    c
-        dtype: str
+        dtype: object
 
         >>> s.sort_values()
         3    a
@@ -4171,7 +3498,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         4    c
         2    d
         0    z
-        dtype: str
+        dtype: object
 
         Sort using a key function. Your `key` function will be
         given the ``Series`` of values and should return an array-like.
@@ -4183,14 +3510,14 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         0    a
         2    c
         4    e
-        dtype: str
+        dtype: object
         >>> s.sort_values(key=lambda x: x.str.lower())
         0    a
         1    B
         2    c
         3    D
         4    e
-        dtype: str
+        dtype: object
 
         NumPy ufuncs work well here. For example, we can
         sort by the ``sin`` of the value
@@ -4207,7 +3534,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         More complicated user-defined functions can be used,
         as long as they expect a Series and return an array-like
 
-        >>> s.sort_values(key=lambda x: np.tan(x.cumsum()))
+        >>> s.sort_values(key=lambda x: (np.tan(x.cumsum())))
         0   -4
         3    2
         4    4
@@ -4215,13 +3542,12 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         2    0
         dtype: int64
         """
-        inplace = self._check_inplace_deprecation(inplace, "sort_values")
         inplace = validate_bool_kwarg(inplace, "inplace")
         # Validate the axis parameter
         self._get_axis_number(axis)
 
         if is_list_like(ascending):
-            ascending = cast("Sequence[bool]", ascending)
+            ascending = cast(Sequence[bool], ascending)
             if len(ascending) != 1:
                 raise ValueError(
                     f"Length of ascending ({len(ascending)}) must be 1 for Series"
@@ -4235,18 +3561,15 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         # GH 35922. Make sorting stable by leveraging nargsort
         if key:
-            values_to_sort = cast("Series", ensure_key_mapped(self, key))._values
+            values_to_sort = cast(Series, ensure_key_mapped(self, key))._values
         else:
             values_to_sort = self._values
         sorted_index = nargsort(values_to_sort, kind, bool(ascending), na_position)
 
         if is_range_indexer(sorted_index, len(sorted_index)):
-            result = self if inplace else self.copy(deep=False)
-            if ignore_index:
-                result.index = default_index(len(sorted_index))
             if inplace:
-                return None
-            return result
+                return self._update_inplace(self)
+            return self.copy(deep=False)
 
         result = self._constructor(
             self._values[sorted_index], index=self.index[sorted_index], copy=False
@@ -4297,7 +3620,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         axis: Axis = ...,
         level: IndexLabel = ...,
         ascending: bool | Sequence[bool] = ...,
-        inplace: bool | lib.NoDefault = ...,
+        inplace: bool = ...,
         kind: SortKind = ...,
         na_position: NaPosition = ...,
         sort_remaining: bool = ...,
@@ -4311,7 +3634,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         axis: Axis = 0,
         level: IndexLabel | None = None,
         ascending: bool | Sequence[bool] = True,
-        inplace: bool | lib.NoDefault = lib.no_default,
+        inplace: bool = False,
         kind: SortKind = "quicksort",
         na_position: NaPosition = "last",
         sort_remaining: bool = True,
@@ -4335,20 +3658,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             sort direction can be controlled for each level individually.
         inplace : bool, default False
             If True, perform operation in-place.
-
-            .. deprecated:: 3.1.0
-
-                This keyword is deprecated and will be removed in pandas 4.0.
-                See the `whatsnew note on PDEP-8
-                <https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace>`__
-                for more details.
-
         kind : {'quicksort', 'mergesort', 'heapsort', 'stable'}, default 'quicksort'
             Choice of sorting algorithm. See also :func:`numpy.sort` for more
-            information. The sort order is deterministic for a given input.
-            'mergesort' and 'stable' are the only stable algorithms, which preserve
-            the relative order of equal keys. This option is ignored when sorting on a
-            MultiIndex or when a `level` is specified.
+            information. 'mergesort' and 'stable' are the only stable algorithms. For
+            DataFrames, this option is only applied when sorting on a single
+            column or label.
         na_position : {'first', 'last'}, default 'last'
             If 'first' puts NaNs at the beginning, 'last' puts NaNs at the end.
             Not implemented for MultiIndex.
@@ -4383,7 +3697,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         2    b
         3    a
         4    d
-        dtype: str
+        dtype: object
 
         Sort Descending
 
@@ -4392,7 +3706,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         3    a
         2    b
         1    c
-        dtype: str
+        dtype: object
 
         By default NaNs are put at the end, but use `na_position` to place
         them at the beginning
@@ -4403,7 +3717,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
          1.0    c
          2.0    b
          3.0    a
-        dtype: str
+        dtype: object
 
         Specify index level to sort
 
@@ -4446,7 +3760,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         d    4
         dtype: int64
         """
-        inplace = self._check_inplace_deprecation(inplace, "sort_index")
 
         return super().sort_index(
             axis=axis,
@@ -4520,9 +3833,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     ) -> Series:
         """
         Return the largest `n` elements.
-
-        This method is optimized for performance compared to sorting the
-        entire Series when only a few of the top values are needed.
 
         Parameters
         ----------
@@ -4630,9 +3940,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     ) -> Series:
         """
         Return the smallest `n` elements.
-
-        This method is optimized for performance compared to sorting the
-        entire Series when only a few of the bottom values are needed.
 
         Parameters
         ----------
@@ -4746,18 +4053,20 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         ----------
         i, j : int or str
             Levels of the indices to be swapped. Can pass level name as string.
-        copy : bool, default False
-            This keyword is now ignored; changing its value will have no
-            impact on the method.
+        copy : bool, default True
+                    Whether to copy underlying data.
 
-            .. deprecated:: 3.0.0
+                    .. note::
+                        The `copy` keyword will change behavior in pandas 3.0.
+                        `Copy-on-Write
+                        <https://pandas.pydata.org/docs/dev/user_guide/copy_on_write.html>`__
+                        will be enabled by default, which means that all methods with a
+                        `copy` keyword will use a lazy copy mechanism to defer the copy
+                        and ignore the `copy` keyword. The `copy` keyword will be
+                        removed in a future version of pandas.
 
-                This keyword is ignored and will be removed in pandas 4.0. Since
-                pandas 3.0, this method always returns a new object using a lazy
-                copy mechanism that defers copies until necessary
-                (Copy-on-Write). See the `user guide on Copy-on-Write
-                <https://pandas.pydata.org/docs/dev/user_guide/migration.html>`__
-                for more details.
+                        You can already get the future behavior and improvements through
+                        enabling copy on write ``pd.options.mode.copy_on_write = True``
 
         Returns
         -------
@@ -4781,24 +4090,24 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         ...     ],
         ... )
         >>> s
-        Final exam  History    January     A
-                    Geography  February    B
-        Coursework  History    March       A
-                    Geography  April       C
-        dtype: str
+        Final exam  History     January      A
+                    Geography   February     B
+        Coursework  History     March        A
+                    Geography   April        C
+        dtype: object
 
         In the following example, we will swap the levels of the indices.
         Here, we will swap the levels column-wise, but levels can be swapped row-wise
-        in a similar manner. Note that column-wise is the default behavior.
+        in a similar manner. Note that column-wise is the default behaviour.
         By not supplying any arguments for i and j, we swap the last and second to
         last indices.
 
         >>> s.swaplevel()
-        Final exam  January   History       A
-                    February  Geography     B
-        Coursework  March     History       A
-                    April     Geography     C
-        dtype: str
+        Final exam  January     History         A
+                    February    Geography       B
+        Coursework  March       History         A
+                    April       Geography       C
+        dtype: object
 
         By supplying one argument, we can choose which index to swap the last
         index with. We can for example swap the first index with the last one as
@@ -4809,7 +4118,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         February    Geography   Final exam      B
         March       History     Coursework      A
         April       Geography   Coursework      C
-        dtype: str
+        dtype: object
 
         We can also define explicitly which indices we want to swap by supplying values
         for both i and j. Here, we for example swap the first and second indices.
@@ -4819,7 +4128,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         Geography   Final exam  February        B
         History     Coursework  March           A
         Geography   Coursework  April           C
-        dtype: str
+        dtype: object
         """
         self._check_copy_deprecation(copy)
         assert isinstance(self.index, MultiIndex)
@@ -4884,10 +4193,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         Transform each element of a list-like to a row.
 
-        This method expands list-like elements so that each item in the list
-        gets its own row, while non-list-like elements remain unchanged.
-        The index is duplicated for the expanded rows.
-
         Parameters
         ----------
         ignore_index : bool, default False
@@ -4912,7 +4217,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         This routine will explode list-likes including lists, tuples, sets,
         Series, and np.ndarray. The result dtype of the subset rows will
         be object. Scalars will be returned unchanged, and empty list-likes will
-        result in an np.nan for that row. In addition, the ordering of elements in
+        result in a np.nan for that row. In addition, the ordering of elements in
         the output will be non-deterministic when exploding sets.
 
         Reference :ref:`the user guide <reshaping.explode>` for more examples.
@@ -4961,9 +4266,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         Unstack, also known as pivot, Series with MultiIndex to produce DataFrame.
 
-        This method pivots a level of the MultiIndex labels, reshaping the
-        Series into a DataFrame where the unstacked level becomes the columns.
-
         Parameters
         ----------
         level : int, str, or list of these, default last level
@@ -4971,9 +4273,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         fill_value : scalar value, default None
             Value to use when replacing NaN values.
         sort : bool, default True
-            Sort the level(s) in the resulting MultiIndex columns. This also
-            orders the rows of the result: sorted by the remaining levels if
-            ``True``, in order of first appearance if ``False``.
+            Sort the level(s) in the resulting MultiIndex columns.
 
         Returns
         -------
@@ -5020,9 +4320,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
     def map(
         self,
-        func: Callable[..., Any] | Mapping[Any, Any] | Series | None = None,
+        arg: Callable | Mapping | Series,
         na_action: Literal["ignore"] | None = None,
-        engine: Callable[..., Any] | None = None,
         **kwargs,
     ) -> Series:
         """
@@ -5034,33 +4333,14 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         Parameters
         ----------
-        func : function, collections.abc.Mapping subclass or Series
-            Function or mapping correspondence.
+        arg : function, collections.abc.Mapping subclass or Series
+            Mapping correspondence.
         na_action : {None, 'ignore'}, default None
             If 'ignore', propagate NaN values, without passing them to the
             mapping correspondence.
-        engine : decorator, optional
-            Choose the execution engine to use to run the function. Only used for
-            functions. If ``map`` is called with a mapping or ``Series``, an
-            exception will be raised. If ``engine`` is not provided the function will
-            be executed by the regular Python interpreter.
-
-            Options include JIT compilers such as Numba, Bodo or Blosc2, which in some
-            cases can speed up the execution. To use an executor you can provide the
-            decorators ``numba.jit``, ``numba.njit``, ``bodo.jit`` or ``blosc2.jit``.
-            You can also provide the decorator with parameters, like
-            ``numba.jit(nogil=True)``.
-
-            Not all functions can be executed with all execution engines. In general,
-            JIT compilers will require type stability in the function (no variable
-            should change data type during the execution). And not all pandas and
-            NumPy APIs are supported. Check the engine documentation for limitations.
-
-            .. versionadded:: 3.0.0
-
         **kwargs
             Additional keyword arguments to pass as keywords arguments to
-            ``func``.
+            `arg`.
 
             .. versionadded:: 3.0.0
 
@@ -5078,7 +4358,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         Notes
         -----
-        When ``func`` is a dictionary, values in Series that are not in the
+        When ``arg`` is a dictionary, values in Series that are not in the
         dictionary (as keys) are converted to ``NaN``. However, if the
         dictionary is a ``dict`` subclass that defines ``__missing__`` (i.e.
         provides a method for default values), then this default is used
@@ -5092,7 +4372,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         1      dog
         2      NaN
         3   rabbit
-        dtype: str
+        dtype: object
 
         ``map`` accepts a ``dict`` or a ``Series``. Values that are not found
         in the ``dict`` are converted to ``NaN``, unless the dict has a default
@@ -5103,7 +4383,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         1    puppy
         2      NaN
         3      NaN
-        dtype: str
+        dtype: object
 
         It also accepts a function:
 
@@ -5112,7 +4392,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         1       I am a dog
         2       I am a nan
         3    I am a rabbit
-        dtype: str
+        dtype: object
 
         To avoid applying the function to missing values (and keep them as
         ``NaN``) ``na_action='ignore'`` can be used:
@@ -5122,72 +4402,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         1     I am a dog
         2            NaN
         3  I am a rabbit
-        dtype: str
-
-        For categorical data, the function is only applied to the categories:
-
-        >>> s = pd.Series(list("cabaa"))
-        >>> s.map(print)
-        c
-        a
-        b
-        a
-        a
-        0    None
-        1    None
-        2    None
-        3    None
-        4    None
-        dtype: object
-
-        >>> s_cat = s.astype("category")
-        >>> s_cat.map(print)  # function called once per unique category
-        a
-        b
-        c
-        0    None
-        1    None
-        2    None
-        3    None
-        4    None
         dtype: object
         """
-        if func is None:
-            if "arg" in kwargs:
-                # `.map(arg=my_func)`
-                func = kwargs.pop("arg")
-                # https://github.com/pandas-dev/pandas/pull/61264
-                warnings.warn(
-                    "The parameter `arg` has been renamed to `func`, and it "
-                    "will stop being supported in a future version of pandas.",
-                    Pandas4Warning,
-                    stacklevel=find_stack_level(),
-                )
-            else:
-                raise ValueError("The `func` parameter is required")
-
-        if engine is not None:
-            if not callable(func):
-                raise ValueError(
-                    "The engine argument can only be specified when func is a function"
-                )
-            if not hasattr(engine, "__pandas_udf__"):
-                raise ValueError(f"Not a valid engine: {engine!r}")
-            result = engine.__pandas_udf__.map(  # type: ignore[attr-defined]
-                data=self,
-                func=func,
-                args=(),
-                kwargs=kwargs,
-                decorator=engine,
-                skip_na=na_action == "ignore",
-            )
-            if not isinstance(result, Series):
-                result = Series(result, index=self.index, name=self.name)
-            return result.__finalize__(self, method="map")
-
-        if callable(func):
-            func = functools.partial(func, **kwargs)
-        new_values = self._map_values(func, na_action=na_action)
+        if callable(arg):
+            arg = functools.partial(arg, **kwargs)
+        new_values = self._map_values(arg, na_action=na_action)
         return self._constructor(new_values, index=self.index, copy=False).__finalize__(
             self, method="map"
         )
@@ -5206,87 +4425,45 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         return self
 
-    def aggregate(
-        self, func=None, axis: Axis = 0, *args, **kwargs
-    ) -> DataFrame | Series:
+    _agg_see_also_doc = dedent(
         """
-        Aggregate using one or more operations over the specified axis.
+    See Also
+    --------
+    Series.apply : Invoke function on a Series.
+    Series.transform : Transform function producing a Series with like indexes.
+    """
+    )
 
-        This method applies one or more aggregation functions to the Series
-        and returns a scalar, Series, or DataFrame depending on the
-        function(s) provided.
-
-        Parameters
-        ----------
-        func : function, str, list or dict
-            Function to use for aggregating the data. If a function, must either
-            work when passed a Series or when passed to Series.apply.
-
-            Accepted combinations are:
-
-            - function
-            - string function name
-            - list of functions and/or function names, e.g. ``[np.sum, 'mean']``
-            - dict of axis labels -> functions, function names or list of such.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-        *args
-            Positional arguments to pass to `func`.
-        **kwargs
-            Keyword arguments to pass to `func`.
-
-        Returns
-        -------
-        scalar, Series or DataFrame
-            The return can be:
-
-            * scalar : when Series.agg is called with single function
-            * Series : when DataFrame.agg is called with a single function
-            * DataFrame : when DataFrame.agg is called with several functions
-
-        See Also
-        --------
-        Series.apply : Invoke function on a Series.
-        Series.transform : Transform function producing a Series with like indexes.
-
-        Notes
-        -----
-        The aggregation operations are always performed over an axis, either the
-        index (default) or the column axis. This behavior is different from
-        `numpy` aggregation functions (`mean`, `median`, `prod`, `sum`, `std`,
-        `var`), where the default is to compute the aggregation of the flattened
-        array, e.g., ``numpy.mean(arr_2d)`` as opposed to
-        ``numpy.mean(arr_2d, axis=0)``.
-
-        `agg` is an alias for `aggregate`. Use the alias.
-
-        Functions that mutate the passed object can produce unexpected
-        behavior or errors and are not supported. See :ref:`gotchas.udf-mutation`
-        for more details.
-
-        A passed user-defined-function will be passed a Series for evaluation.
-
-        If ``func`` defines an index relabeling, ``axis`` must be ``0`` or ``index``.
-
-        Examples
-        --------
-        >>> s = pd.Series([1, 2, 3, 4])
-        >>> s
-        0    1
-        1    2
-        2    3
-        3    4
-        dtype: int64
-
-        >>> s.agg("min")
-        1
-
-        >>> s.agg(["min", "max"])
-        min   1
-        max   4
-        dtype: int64
+    _agg_examples_doc = dedent(
         """
+    Examples
+    --------
+    >>> s = pd.Series([1, 2, 3, 4])
+    >>> s
+    0    1
+    1    2
+    2    3
+    3    4
+    dtype: int64
 
+    >>> s.agg('min')
+    1
+
+    >>> s.agg(['min', 'max'])
+    min   1
+    max   4
+    dtype: int64
+    """
+    )
+
+    @doc(
+        _shared_docs["aggregate"],
+        klass=_shared_doc_kwargs["klass"],
+        axis=_shared_doc_kwargs["axis"],
+        see_also=_agg_see_also_doc,
+        examples=_agg_examples_doc,
+    )
+    def aggregate(self, func=None, axis: Axis = 0, *args, **kwargs):
         # Validate the axis parameter
         self._get_axis_number(axis)
 
@@ -5300,151 +4477,14 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
     agg = aggregate
 
+    @doc(
+        _shared_docs["transform"],
+        klass=_shared_doc_kwargs["klass"],
+        axis=_shared_doc_kwargs["axis"],
+    )
     def transform(
         self, func: AggFuncType, axis: Axis = 0, *args, **kwargs
     ) -> DataFrame | Series:
-        """
-        Call ``func`` on self producing a Series with the same axis shape as self.
-
-        Unlike ``agg``, which can return a scalar or a smaller result,
-        ``transform`` must return a result that is the same size as the input.
-        This makes it suitable for element-wise operations.
-
-        Parameters
-        ----------
-        func : function, str, list-like or dict-like
-            Function to use for transforming the data. If a function, must either
-            work when passed a Series or when passed to Series.apply. If func
-            is both list-like and dict-like, dict-like behavior takes precedence.
-
-            Accepted combinations are:
-
-            - function
-            - string function name
-            - list-like of functions and/or function names, e.g. ``[np.exp, 'sqrt']``
-            - dict-like of axis labels -> functions, function names or list-like of such
-
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        *args
-            Positional arguments to pass to `func`.
-        **kwargs
-            Keyword arguments to pass to `func`.
-
-        Returns
-        -------
-        Series
-            A Series that must have the same length as self.
-
-        Raises
-        ------
-        ValueError : If the returned Series has a different length than self.
-
-        See Also
-        --------
-        Series.agg : Only perform aggregating type operations.
-        Series.apply : Invoke function on a Series.
-
-        Notes
-        -----
-        Functions that mutate the passed object can produce unexpected
-        behavior or errors and are not supported. See :ref:`gotchas.udf-mutation`
-        for more details.
-
-        Examples
-        --------
-        >>> df = pd.DataFrame({"A": range(3), "B": range(1, 4)})
-        >>> df
-        A  B
-        0  0  1
-        1  1  2
-        2  2  3
-        >>> df.transform(lambda x: x + 1)
-        A  B
-        0  1  2
-        1  2  3
-        2  3  4
-
-        Even though the resulting Series must have the same length as the
-        input Series, it is possible to provide several input functions:
-
-        >>> s = pd.Series(range(3))
-        >>> s
-        0    0
-        1    1
-        2    2
-        dtype: int64
-        >>> s.transform([np.sqrt, np.exp])
-            sqrt        exp
-        0  0.000000   1.000000
-        1  1.000000   2.718282
-        2  1.414214   7.389056
-
-        You can call transform on a GroupBy object:
-
-        >>> df = pd.DataFrame(
-        ...     {
-        ...         "Date": [
-        ...             "2015-05-08",
-        ...             "2015-05-07",
-        ...             "2015-05-06",
-        ...             "2015-05-05",
-        ...             "2015-05-08",
-        ...             "2015-05-07",
-        ...             "2015-05-06",
-        ...             "2015-05-05",
-        ...         ],
-        ...         "Data": [5, 8, 6, 1, 50, 100, 60, 120],
-        ...     }
-        ... )
-        >>> df
-                Date  Data
-        0  2015-05-08     5
-        1  2015-05-07     8
-        2  2015-05-06     6
-        3  2015-05-05     1
-        4  2015-05-08    50
-        5  2015-05-07   100
-        6  2015-05-06    60
-        7  2015-05-05   120
-        >>> df.groupby("Date")["Data"].transform("sum")
-        0     55
-        1    108
-        2     66
-        3    121
-        4     55
-        5    108
-        6     66
-        7    121
-        Name: Data, dtype: int64
-
-        >>> df = pd.DataFrame(
-        ...     {
-        ...         "c": [1, 1, 1, 2, 2, 2, 2],
-        ...         "type": ["m", "n", "o", "m", "m", "n", "n"],
-        ...     }
-        ... )
-        >>> df
-        c type
-        0  1    m
-        1  1    n
-        2  1    o
-        3  2    m
-        4  2    m
-        5  2    n
-        6  2    n
-        >>> df["size"] = df.groupby("c")["type"].transform(len)
-        >>> df
-        c type size
-        0  1    m    3
-        1  1    n    3
-        2  1    o    3
-        3  2    m    4
-        4  2    m    4
-        5  2    n    4
-        6  2    n    4
-        """
         # Validate axis argument
         self._get_axis_number(axis)
         ser = self.copy(deep=False)
@@ -5611,7 +4651,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         inplace: Literal[True],
         level: Level | None = ...,
         errors: IgnoreRaise = ...,
-    ) -> Series | None: ...
+    ) -> None: ...
 
     @overload
     def rename(
@@ -5625,13 +4665,25 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         errors: IgnoreRaise = ...,
     ) -> Series: ...
 
+    @overload
+    def rename(
+        self,
+        index: Renamer | Hashable | None = ...,
+        *,
+        axis: Axis | None = ...,
+        copy: bool | lib.NoDefault = ...,
+        inplace: bool = ...,
+        level: Level | None = ...,
+        errors: IgnoreRaise = ...,
+    ) -> Series | None: ...
+
     def rename(
         self,
         index: Renamer | Hashable | None = None,
         *,
         axis: Axis | None = None,
         copy: bool | lib.NoDefault = lib.no_default,
-        inplace: bool | lib.NoDefault = lib.no_default,
+        inplace: bool = False,
         level: Level | None = None,
         errors: IgnoreRaise = "ignore",
     ) -> Series | None:
@@ -5656,28 +4708,23 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         axis : {0 or 'index'}
             Unused. Parameter needed for compatibility with DataFrame.
         copy : bool, default False
-            This keyword is now ignored; changing its value will have no
-            impact on the method.
+            Also copy underlying data.
+
+            .. note::
+                The `copy` keyword will change behavior in pandas 3.0.
+                `Copy-on-Write
+                <https://pandas.pydata.org/docs/dev/user_guide/copy_on_write.html>`__
+                will be enabled by default, which means that all methods with a
+                `copy` keyword will use a lazy copy mechanism to defer the copy and
+                ignore the `copy` keyword. The `copy` keyword will be removed in a
+                future version of pandas.
+
+                You can already get the future behavior and improvements through
+                enabling copy on write ``pd.options.mode.copy_on_write = True``
 
             .. deprecated:: 3.0.0
-
-                This keyword is ignored and will be removed in pandas 4.0. Since
-                pandas 3.0, this method always returns a new object using a lazy
-                copy mechanism that defers copies until necessary
-                (Copy-on-Write). See the `user guide on Copy-on-Write
-                <https://pandas.pydata.org/docs/dev/user_guide/migration.html>`__
-                for more details.
-
         inplace : bool, default False
             Whether to return a new Series. If True the value of copy is ignored.
-
-            .. deprecated:: 3.1.0
-
-                This keyword is deprecated and will be removed in pandas 4.0.
-                See the `whatsnew note on PDEP-8
-                <https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace>`__
-                for more details.
-
         level : int or level name, default None
             In case of MultiIndex, only rename labels in the specified level.
         errors : {'ignore', 'raise'}, default 'ignore'
@@ -5687,9 +4734,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         Returns
         -------
-        Series
-            A shallow copy with index labels or name altered, or the same object
-            if ``inplace=True`` and index is not a dict or callable else None.
+        Series or None
+            Series with index labels or name altered or None if ``inplace=True``.
 
         See Also
         --------
@@ -5720,7 +4766,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         5    3
         dtype: int64
         """
-        inplace = self._check_inplace_deprecation(inplace, "rename")
         self._check_copy_deprecation(copy)
         if axis is not None:
             # Make sure we raise if an invalid 'axis' is passed.
@@ -5740,47 +4785,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         else:
             return self._set_name(index, inplace=inplace)
 
-    def set_axis(
-        self,
-        labels,
-        *,
-        axis: Axis = 0,
-        copy: bool | lib.NoDefault = lib.no_default,
-    ) -> Series:
+    @Appender(
         """
-        Assign desired index to given axis.
-
-        Indexes for row labels can be changed by assigning a list-like or Index.
-
-        Parameters
-        ----------
-        labels : list-like or Index
-            The values for the new index.
-        axis : {0 or 'index'}, default 0
-            The axis to update. The value 0 identifies the rows. For `Series`
-            this parameter is unused and defaults to 0.
-        copy : bool, default False
-            This keyword is now ignored; changing its value will have no
-            impact on the method.
-
-            .. deprecated:: 3.0.0
-
-                This keyword is ignored and will be removed in pandas 4.0. Since
-                pandas 3.0, this method always returns a new object using a lazy
-                copy mechanism that defers copies until necessary
-                (Copy-on-Write). See the `user guide on Copy-on-Write
-                <https://pandas.pydata.org/docs/dev/user_guide/migration.html>`__
-                for more details.
-
-        Returns
-        -------
-        Series
-            A shallow copy of the object with axis altered to the given index.
-
-        See Also
-        --------
-        Series.rename_axis : Alter the name of the index.
-
         Examples
         --------
         >>> s = pd.Series([1, 2, 3])
@@ -5789,17 +4795,37 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         1    2
         2    3
         dtype: int64
-        >>> s.set_axis(["a", "b", "c"], axis=0)
+
+        >>> s.set_axis(['a', 'b', 'c'], axis=0)
         a    1
         b    2
         c    3
         dtype: int64
-        """
-
+    """
+    )
+    @Substitution(
+        klass=_shared_doc_kwargs["klass"],
+        axes_single_arg=_shared_doc_kwargs["axes_single_arg"],
+        extended_summary_sub="",
+        axis_description_sub="",
+        see_also_sub="",
+    )
+    @Appender(NDFrame.set_axis.__doc__)
+    def set_axis(
+        self,
+        labels,
+        *,
+        axis: Axis = 0,
+        copy: bool | lib.NoDefault = lib.no_default,
+    ) -> Series:
         return super().set_axis(labels, axis=axis, copy=copy)
 
     # error: Cannot determine type of 'reindex'
-
+    @doc(
+        NDFrame.reindex,  # type: ignore[has-type]
+        klass=_shared_doc_kwargs["klass"],
+        optional_reindex=_shared_doc_kwargs["optional_reindex"],
+    )
     def reindex(  # type: ignore[override]
         self,
         index=None,
@@ -5812,229 +4838,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         limit: int | None = None,
         tolerance=None,
     ) -> Series:
-        """
-        Conform Series to new index with optional filling logic.
-
-        Places NA/NaN in locations having no value in the previous index. A new object
-        is produced unless the new index is equivalent to the current one and
-        ``copy=False``.
-
-        Parameters
-        ----------
-        index : scalar, list-like, dict-like or function, optional
-            A scalar, list-like, dict-like or functions transformations to
-            apply to that axis' values.
-        axis : {0 or 'index'}, default 0
-            The axis to rename. For `Series` this parameter is unused and defaults to 0.
-        method : {None, 'backfill'/'bfill', 'pad'/'ffill', 'nearest'}
-            Method to use for filling holes in reindexed DataFrame.
-            Please note: this is only applicable to DataFrames/Series with a
-            monotonically increasing/decreasing index.
-            Filling is based on the position of each new label relative to the
-            existing labels. For example, with ``method='ffill'`` and a
-            monotonically increasing index, a new label is filled from the
-            nearest existing label that sorts before it.
-
-            * None (default): don't fill gaps
-            * pad / ffill: Propagate last valid observation forward to next
-              valid.
-            * backfill / bfill: Use next valid observation to fill gap.
-            * nearest: Use nearest valid observations to fill gap.
-
-        copy : bool, default False
-            This keyword is now ignored; changing its value will have no
-            impact on the method.
-
-            .. deprecated:: 3.0.0
-
-                This keyword is ignored and will be removed in pandas 4.0. Since
-                pandas 3.0, this method always returns a new object using a lazy
-                copy mechanism that defers copies until necessary
-                (Copy-on-Write). See the `user guide on Copy-on-Write
-                <https://pandas.pydata.org/docs/dev/user_guide/migration.html>`__
-                for more details.
-
-        level : int or name
-            Match index values on the specified level of a MultiIndex.
-            The MultiIndex may be on either the calling object or the
-            target index; using ``level`` when both are MultiIndexes is
-            ambiguous and raises a ``TypeError``. The new labels are
-            aligned against the values of that single level while the
-            other levels are left unchanged; passing a flat index with
-            ``level`` does not form the Cartesian product of the
-            remaining levels. See :ref:`advanced.advanced_reindex` for
-            the intended use.
-        fill_value : scalar, default np.nan
-            Value to use for missing values. Defaults to NaN, but can be any
-            "compatible" value.
-        limit : int, default None
-            Maximum number of consecutive elements to forward or backward fill.
-        tolerance : optional
-            Maximum distance between original and new labels for inexact
-            matches. The values of the index at the matching locations most
-            satisfy the equation ``abs(index[indexer] - target) <= tolerance``.
-
-            Tolerance may be a scalar value, which applies the same tolerance
-            to all values, or list-like, which applies variable tolerance per
-            element. List-like includes list, tuple, array, Series, and must be
-            the same size as the index and its dtype must exactly match the
-            index's type.
-
-        Returns
-        -------
-        Series
-            Series with changed index.
-
-        See Also
-        --------
-        DataFrame.set_index : Set row labels.
-        DataFrame.reset_index : Remove row labels or move them to new columns.
-        DataFrame.reindex_like : Change to same indices as other DataFrame.
-
-        Examples
-        --------
-        ``DataFrame.reindex`` supports two calling conventions
-
-        * ``(index=index_labels, columns=column_labels, ...)``
-        * ``(labels, axis={'index', 'columns'}, ...)``
-
-        We *highly* recommend using keyword arguments to clarify your
-        intent.
-
-        Create a DataFrame with some fictional data.
-
-        >>> index = ["Firefox", "Chrome", "Safari", "IE10", "Konqueror"]
-        >>> columns = ["http_status", "response_time"]
-        >>> df = pd.DataFrame(
-        ...     [[200, 0.04], [200, 0.02], [404, 0.07], [404, 0.08], [301, 1.0]],
-        ...     columns=columns,
-        ...     index=index,
-        ... )
-        >>> df
-                   http_status  response_time
-        Firefox            200           0.04
-        Chrome             200           0.02
-        Safari             404           0.07
-        IE10               404           0.08
-        Konqueror          301           1.00
-
-        Create a new index and reindex the DataFrame. By default
-        values in the new index that do not have corresponding
-        records in the DataFrame are assigned ``NaN``.
-
-        >>> new_index = ["Safari", "Iceweasel", "Comodo Dragon", "IE10", "Chrome"]
-        >>> df.reindex(new_index)
-                       http_status  response_time
-        Safari               404.0           0.07
-        Iceweasel              NaN            NaN
-        Comodo Dragon          NaN            NaN
-        IE10                 404.0           0.08
-        Chrome               200.0           0.02
-
-        We can fill in the missing values by passing a value to
-        the keyword ``fill_value``. Because the index is not monotonically
-        increasing or decreasing, we cannot use arguments to the keyword
-        ``method`` to fill the ``NaN`` values.
-
-        >>> df.reindex(new_index, fill_value=0)
-                       http_status  response_time
-        Safari                 404           0.07
-        Iceweasel                0           0.00
-        Comodo Dragon            0           0.00
-        IE10                   404           0.08
-        Chrome                 200           0.02
-
-        We can also reindex the columns.
-
-        >>> df.reindex(columns=["http_status", "user_agent"])
-                   http_status  user_agent
-        Firefox            200         NaN
-        Chrome             200         NaN
-        Safari             404         NaN
-        IE10               404         NaN
-        Konqueror          301         NaN
-
-        Or we can use "axis-style" keyword arguments
-
-        >>> df.reindex(["http_status", "user_agent"], axis="columns")
-                   http_status  user_agent
-        Firefox            200         NaN
-        Chrome             200         NaN
-        Safari             404         NaN
-        IE10               404         NaN
-        Konqueror          301         NaN
-
-        To further illustrate the filling functionality in
-        ``reindex``, we will create a DataFrame with a
-        monotonically increasing index (for example, a sequence
-        of dates).
-
-        >>> date_index = pd.date_range("1/1/2010", periods=6, freq="D")
-        >>> df2 = pd.DataFrame(
-        ...     {"prices": [100, 101, np.nan, 100, 89, 88]}, index=date_index
-        ... )
-        >>> df2
-                    prices
-        2010-01-01   100.0
-        2010-01-02   101.0
-        2010-01-03     NaN
-        2010-01-04   100.0
-        2010-01-05    89.0
-        2010-01-06    88.0
-
-        Suppose we decide to expand the DataFrame to cover a wider
-        date range.
-
-        >>> date_index2 = pd.date_range("12/29/2009", periods=10, freq="D")
-        >>> df2.reindex(date_index2)
-                    prices
-        2009-12-29     NaN
-        2009-12-30     NaN
-        2009-12-31     NaN
-        2010-01-01   100.0
-        2010-01-02   101.0
-        2010-01-03     NaN
-        2010-01-04   100.0
-        2010-01-05    89.0
-        2010-01-06    88.0
-        2010-01-07     NaN
-
-        The index entries that did not have a value in the original data frame
-        (for example, '2009-12-29') are by default filled with ``NaN``.
-        If desired, we can fill in the missing values using one of several
-        options.
-
-        For example, to back-propagate the last valid value to fill the ``NaN``
-        values, pass ``bfill`` as an argument to the ``method`` keyword.
-
-        >>> df2.reindex(date_index2, method="bfill")
-                    prices
-        2009-12-29   100.0
-        2009-12-30   100.0
-        2009-12-31   100.0
-        2010-01-01   100.0
-        2010-01-02   101.0
-        2010-01-03     NaN
-        2010-01-04   100.0
-        2010-01-05    89.0
-        2010-01-06    88.0
-        2010-01-07     NaN
-
-        Please note that the ``NaN`` value present in the original DataFrame
-        (at index value 2010-01-03) will not be filled by any of the
-        value propagation schemes. This is because filling while reindexing
-        does not look at DataFrame values, but only compares the original and
-        desired indexes. If you do want to fill in the ``NaN`` values present
-        in the original DataFrame, use the ``fillna()`` method.
-
-        Because ``method="bfill"`` fills each new label from the next entry
-        present in the original index, the trailing entry at 2010-01-07 stays
-        ``NaN``: there is no original index entry after it. Conversely,
-        ``method="ffill"`` would leave the leading entries (before the first
-        original index entry) unfilled.
-
-        See the :ref:`user guide <basics.reindexing>` for more.
-        """
         return super().reindex(
             index=index,
             method=method,
@@ -6075,7 +4878,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         index=...,
         axis: Axis = ...,
         copy: bool | lib.NoDefault = ...,
-        inplace: bool | lib.NoDefault = ...,
+        inplace: bool = ...,
     ) -> Self | None: ...
 
     def rename_axis(
@@ -6085,14 +4888,10 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         index=lib.no_default,
         axis: Axis = 0,
         copy: bool | lib.NoDefault = lib.no_default,
-        inplace: bool | lib.NoDefault = lib.no_default,
+        inplace: bool = False,
     ) -> Self | None:
         """
         Set the name of the axis for the index.
-
-        This method sets or changes the name of the index (axis) of the
-        Series. It can accept a scalar, list-like, or function to rename
-        the axis.
 
         Parameters
         ----------
@@ -6108,28 +4907,22 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         axis : {0 or 'index'}, default 0
             The axis to rename. For `Series` this parameter is unused and defaults to 0.
         copy : bool, default False
-            This keyword is now ignored; changing its value will have no
-            impact on the method.
+            Also copy underlying data.
 
-            .. deprecated:: 3.0.0
+            .. note::
+                The `copy` keyword will change behavior in pandas 3.0.
+                `Copy-on-Write
+                <https://pandas.pydata.org/docs/dev/user_guide/copy_on_write.html>`__
+                will be enabled by default, which means that all methods with a
+                `copy` keyword will use a lazy copy mechanism to defer the copy and
+                ignore the `copy` keyword. The `copy` keyword will be removed in a
+                future version of pandas.
 
-                This keyword is ignored and will be removed in pandas 4.0. Since
-                pandas 3.0, this method always returns a new object using a lazy
-                copy mechanism that defers copies until necessary
-                (Copy-on-Write). See the `user guide on Copy-on-Write
-                <https://pandas.pydata.org/docs/dev/user_guide/migration.html>`__
-                for more details.
-
+                You can already get the future behavior and improvements through
+                enabling copy on write ``pd.options.mode.copy_on_write = True``
         inplace : bool, default False
             Modifies the object directly, instead of creating a new Series
             or DataFrame.
-
-            .. deprecated:: 3.1.0
-
-                This keyword is deprecated and will be removed in pandas 4.0.
-                See the `whatsnew note on PDEP-8
-                <https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace>`__
-                for more details.
 
         Returns
         -------
@@ -6150,16 +4943,14 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         0       dog
         1       cat
         2    monkey
-        dtype: str
+        dtype: object
         >>> s.rename_axis("animal")
         animal
         0    dog
         1    cat
         2    monkey
-        dtype: str
+        dtype: object
         """
-        inplace = self._check_inplace_deprecation(inplace, "rename_axis")
-
         return super().rename_axis(
             mapper=mapper,
             index=index,
@@ -6203,7 +4994,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         index: IndexLabel | ListLike = ...,
         columns: IndexLabel | ListLike = ...,
         level: Level | None = ...,
-        inplace: bool | lib.NoDefault = ...,
+        inplace: bool = ...,
         errors: IgnoreRaise = ...,
     ) -> Series | None: ...
 
@@ -6215,7 +5006,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         index: IndexLabel | ListLike = None,
         columns: IndexLabel | ListLike = None,
         level: Level | None = None,
-        inplace: bool | lib.NoDefault = lib.no_default,
+        inplace: bool = False,
         errors: IgnoreRaise = "raise",
     ) -> Series | None:
         """
@@ -6240,14 +5031,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             For MultiIndex, level for which the labels will be removed.
         inplace : bool, default False
             If True, do operation inplace and return None.
-
-            .. deprecated:: 3.1.0
-
-                This keyword is deprecated and will be removed in pandas 4.0.
-                See the `whatsnew note on PDEP-8
-                <https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace>`__
-                for more details.
-
         errors : {'ignore', 'raise'}, default 'raise'
             If 'ignore', suppress error and only existing labels are dropped.
 
@@ -6311,8 +5094,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
                 length      0.3
         dtype: float64
         """
-        inplace = self._check_inplace_deprecation(inplace, "drop")
-
         return super().drop(
             labels=labels,
             axis=axis,
@@ -6326,9 +5107,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     def pop(self, item: Hashable) -> Any:
         """
         Return item and drops from series. Raise KeyError if not found.
-
-        The Series is modified in place, and the value corresponding to the
-        given label is removed and returned.
 
         Parameters
         ----------
@@ -6359,6 +5137,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         return super().pop(item=item)
 
+    @doc(INFO_DOCSTRING, **series_sub_kwargs)
     def info(
         self,
         verbose: bool | None = None,
@@ -6367,114 +5146,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         memory_usage: bool | str | None = None,
         show_counts: bool = True,
     ) -> None:
-        """
-        Print a concise summary of a Series.
-
-        This method prints information about a Series including
-        the index dtype, non-NA values and memory usage.
-
-        Parameters
-        ----------
-        verbose : bool, optional
-            Whether to print the full summary. By default, the setting in
-            ``pandas.options.display.max_info_columns`` is followed.
-        buf : writable buffer, defaults to sys.stdout
-            Where to send the output. By default, the output is printed to
-            sys.stdout. Pass a writable buffer if you need to further process
-            the output.
-        max_cols : int, optional
-            Unused, exists only for compatibility with DataFrame.info.
-        memory_usage : bool, str, optional
-            Specifies whether total memory usage of the Series
-            elements (including the index) should be displayed. By default,
-            this follows the ``pandas.options.display.memory_usage`` setting.
-
-            True always show memory usage. False never shows memory usage.
-            A value of 'deep' is equivalent to "True with deep introspection".
-            Memory usage is shown in human-readable units (base-2
-            representation). Without deep introspection a memory estimation is
-            made based in column dtype and number of rows assuming values
-            consume the same memory amount for corresponding dtypes. With deep
-            memory introspection, a real memory usage calculation is performed
-            at the cost of computational resources. See the
-            :ref:`Frequently Asked Questions <df-memory-usage>` for more
-            details.
-        show_counts : bool, optional
-            Whether to show the non-null counts. By default, this is shown
-            only if the DataFrame is smaller than
-            ``pandas.options.display.max_info_rows`` and
-            ``pandas.options.display.max_info_columns``. A value of True always
-            shows the counts, and False never shows the counts.
-
-        Returns
-        -------
-        None
-            This method prints a summary of a Series and returns None.
-
-        See Also
-        --------
-        Series.describe: Generate descriptive statistics of Series.
-        Series.memory_usage: Memory usage of Series.
-
-        Examples
-        --------
-        >>> int_values = [1, 2, 3, 4, 5]
-        >>> text_values = ["alpha", "beta", "gamma", "delta", "epsilon"]
-        >>> s = pd.Series(text_values, index=int_values)
-        >>> s.info()
-        <class 'pandas.Series'>
-        Index: 5 entries, 1 to 5
-        Series name: None
-        Non-Null Count  Dtype
-        --------------  -----
-        5 non-null      str
-        dtypes: str(1)
-        memory usage: 106.0 bytes
-
-        Prints a summary excluding information about its values:
-
-        >>> s.info(verbose=False)
-        <class 'pandas.Series'>
-        Index: 5 entries, 1 to 5
-        dtypes: str(1)
-        memory usage: 106.0 bytes
-
-        Pipe output of Series.info to buffer instead of sys.stdout, get
-        buffer content and writes to a text file:
-
-        >>> import io
-        >>> buffer = io.StringIO()
-        >>> s.info(buf=buffer)
-        >>> s = buffer.getvalue()
-        >>> with open("df_info.txt", "w", encoding="utf-8") as f:  # doctest: +SKIP
-        ...     f.write(s)
-        260
-
-        The `memory_usage` parameter allows deep introspection mode, specially
-        useful for big Series and fine-tune memory optimization:
-
-        >>> random_strings_array = np.random.choice(["a", "b", "c"], 10**6)
-        >>> s = pd.Series(np.random.choice(["a", "b", "c"], 10**6))
-        >>> s.info()
-        <class 'pandas.Series'>
-        RangeIndex: 1000000 entries, 0 to 999999
-        Series name: None
-        Non-Null Count    Dtype
-        --------------    -----
-        1000000 non-null  str
-        dtypes: str(1)
-        memory usage: 8.6 MB
-
-        >>> s.info(memory_usage="deep")
-        <class 'pandas.Series'>
-        RangeIndex: 1000000 entries, 0 to 999999
-        Series name: None
-        Non-Null Count    Dtype
-        --------------    -----
-        1000000 non-null  str
-        dtypes: str(1)
-        memory usage: 8.6 MB
-        """
         return SeriesInfo(self, memory_usage).render(
             buf=buf,
             max_cols=max_cols,
@@ -6513,7 +5184,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         --------
         >>> s = pd.Series(range(3))
         >>> s.memory_usage()
-        156
+        152
 
         Not including the index gives the size of the rest of the data, which
         is necessarily smaller:
@@ -6525,13 +5196,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         >>> s = pd.Series(["a", "b"])
         >>> s.values
-        <ArrowStringArray>
-        ['a', 'b']
-        Length: 2, dtype: str
+        array(['a', 'b'], dtype=object)
         >>> s.memory_usage()
-        150
+        144
         >>> s.memory_usage(deep=True)
-        150
+        244
         """
         v = self._memory_usage(deep=deep)
         if index:
@@ -6639,6 +5308,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         inclusive : {"both", "neither", "left", "right"}
             Include boundaries. Whether to set each bound as closed or open.
 
+            .. versionchanged:: 1.3.0
+
         Returns
         -------
         Series
@@ -6720,11 +5391,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         Replace values where the conditions are True.
 
-        Replacement is performed in order; for each element, the first condition
-        that evaluates to True determines the value used. This mirrors the semantics
-        of a SQL ``CASE WHEN`` expression. If no condition matches, the original
-        value is kept.
-
         .. versionadded:: 2.2.0
 
         Parameters
@@ -6801,12 +5467,12 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             for condition, replacement in caselist
         ]
         default = self.copy(deep=False)
-        conditions, replacements = zip(*caselist, strict=True)
+        conditions, replacements = zip(*caselist)
         common_dtypes = [infer_dtype_from(arg)[0] for arg in [*replacements, default]]
         if len(set(common_dtypes)) > 1:
             common_dtype = find_common_type(common_dtypes)
             updated_replacements = []
-            for condition, replacement in zip(conditions, replacements, strict=True):
+            for condition, replacement in zip(conditions, replacements):
                 if is_scalar(replacement):
                     replacement = construct_1d_arraylike_from_scalar(
                         value=replacement, length=len(condition), dtype=common_dtype
@@ -6821,7 +5487,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         counter = range(len(conditions) - 1, -1, -1)
         for position, condition, replacement in zip(
-            counter, reversed(conditions), reversed(replacements), strict=True
+            counter, reversed(conditions), reversed(replacements)
         ):
             try:
                 default = default.mask(
@@ -6834,190 +5500,28 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         return default
 
     # error: Cannot determine type of 'isna'
+    @doc(NDFrame.isna, klass=_shared_doc_kwargs["klass"])  # type: ignore[has-type]
     def isna(self) -> Series:
-        """
-        Detect missing values.
-
-        Return a boolean same-sized Series indicating if the values are NA.
-        NA values, such as None or :attr:`numpy.NaN`, get mapped to True
-        values.
-        Everything else gets mapped to False values. Characters such as empty
-        strings ``''`` or :attr:`numpy.inf` are not considered NA values.
-
-        Returns
-        -------
-        Series
-            Mask of bool values for each element in Series that
-            indicates whether an element is an NA value.
-
-        See Also
-        --------
-        DataFrame.isna : Detect missing values.
-        DataFrame.isnull : Alias of isna.
-        Series.notna : Boolean inverse of isna.
-        DataFrame.notna : Boolean inverse of isna.
-        Series.notnull : Alias of notna.
-        DataFrame.notnull : Alias of notna.
-        Series.dropna : Omit axes labels with missing values.
-        DataFrame.dropna : Omit axes labels with missing values.
-        isna : Top-level isna.
-
-        Examples
-        --------
-        Show which entries in a Series are NA.
-
-        >>> ser = pd.Series([5, 6, np.nan])
-        >>> ser
-        0    5.0
-        1    6.0
-        2    NaN
-        dtype: float64
-        >>> ser.isna()
-        0    False
-        1    False
-        2     True
-        dtype: bool
-        """
         return NDFrame.isna(self)
 
     # error: Cannot determine type of 'isna'
+    @doc(NDFrame.isna, klass=_shared_doc_kwargs["klass"])  # type: ignore[has-type]
     def isnull(self) -> Series:
         """
         Series.isnull is an alias for Series.isna.
-
-        Detect missing values.
-
-        Return a boolean same-sized object indicating if the values are NA.
-        NA values, such as None or :attr:`numpy.NaN`, gets mapped to True
-        values.
-        Everything else gets mapped to False values. Characters such as empty
-        strings ``''`` or :attr:`numpy.inf` are not considered NA values.
-
-        Returns
-        -------
-        Series
-            Mask of bool values for each element in Series
-            that indicates whether an element is an NA value.
-
-        See Also
-        --------
-        Series.isnull : Alias of isna.
-        DataFrame.isnull : Alias of isna.
-        Series.notna : Boolean inverse of isna.
-        DataFrame.notna : Boolean inverse of isna.
-        Series.dropna : Omit axes labels with missing values.
-        DataFrame.dropna : Omit axes labels with missing values.
-        isna : Top-level isna.
-
-        Examples
-        --------
-        >>> ser = pd.Series([5, 6, np.nan])
-        >>> ser
-        0    5.0
-        1    6.0
-        2    NaN
-        dtype: float64
-
-        >>> ser.isnull()
-        0    False
-        1    False
-        2     True
-        dtype: bool
         """
         return super().isnull()
 
     # error: Cannot determine type of 'notna'
+    @doc(NDFrame.notna, klass=_shared_doc_kwargs["klass"])  # type: ignore[has-type]
     def notna(self) -> Series:
-        """
-        Detect existing (non-missing) values.
-
-        Return a boolean same-sized Series indicating if the values are not NA.
-        Non-missing values get mapped to True. Characters such as empty
-        strings ``''`` or :attr:`numpy.inf` are not considered NA values.
-        NA values, such as None or :attr:`numpy.NaN`, get mapped to False
-        values.
-
-        Returns
-        -------
-        Series
-            Mask of bool values for each element in Series that
-            indicates whether an element is not an NA value.
-
-        See Also
-        --------
-        Series.isna : Detect missing values.
-        DataFrame.isna : Detect missing values.
-        Series.isnull : Alias of isna.
-        DataFrame.isnull : Alias of isna.
-        DataFrame.notna : Boolean inverse of isna.
-        DataFrame.notnull : Alias of notna.
-        Series.dropna : Omit axes labels with missing values.
-        DataFrame.dropna : Omit axes labels with missing values.
-        notna : Top-level notna.
-
-        Examples
-        --------
-        Show which entries in a Series are not NA.
-
-        >>> ser = pd.Series([5, 6, np.nan])
-        >>> ser
-        0    5.0
-        1    6.0
-        2    NaN
-        dtype: float64
-        >>> ser.notna()
-        0     True
-        1     True
-        2    False
-        dtype: bool
-        """
         return super().notna()
 
     # error: Cannot determine type of 'notna'
+    @doc(NDFrame.notna, klass=_shared_doc_kwargs["klass"])  # type: ignore[has-type]
     def notnull(self) -> Series:
         """
         Series.notnull is an alias for Series.notna.
-
-        Detect existing (non-missing) values.
-
-        Return a boolean same-sized object indicating if the values are not NA.
-        Non-missing values get mapped to True. Characters such as empty
-        strings ``''`` or :attr:`numpy.inf` are not considered NA values.
-        NA values, such as None or :attr:`numpy.NaN`, get mapped to False
-        values.
-
-        Returns
-        -------
-        Series
-            Mask of bool values for each element in Series
-            that indicates whether an element is not an NA value.
-
-        See Also
-        --------
-        Series.notnull : Alias of notna.
-        DataFrame.notnull : Alias of notna.
-        Series.isna : Boolean inverse of notna.
-        DataFrame.isna : Boolean inverse of notna.
-        Series.dropna : Omit axes labels with missing values.
-        DataFrame.dropna : Omit axes labels with missing values.
-        notna : Top-level notna.
-
-        Examples
-        --------
-        Show which entries in a Series are not NA.
-
-        >>> ser = pd.Series([5, 6, np.nan])
-        >>> ser
-        0    5.0
-        1    6.0
-        2    NaN
-        dtype: float64
-
-        >>> ser.notnull()
-        0     True
-        1     True
-        2    False
-        dtype: bool
         """
         return super().notnull()
 
@@ -7045,7 +5549,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         self,
         *,
         axis: Axis = 0,
-        inplace: bool | lib.NoDefault = lib.no_default,
+        inplace: bool = False,
         how: AnyAll | None = None,
         ignore_index: bool = False,
     ) -> Series | None:
@@ -7061,14 +5565,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             Unused. Parameter needed for compatibility with DataFrame.
         inplace : bool, default False
             If True, do operation inplace and return None.
-
-            .. deprecated:: 3.1.0
-
-                This keyword is deprecated and will be removed in pandas 4.0.
-                See the `whatsnew note on PDEP-8
-                <https://pandas.pydata.org/docs/dev/whatsnew/v3.1.0.html#deprecation-inplace>`__
-                for more details.
-
         how : str, optional
             Not in use. Kept for compatibility.
         ignore_index : bool, default ``False``
@@ -7123,7 +5619,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         5    I stay
         dtype: object
         """
-        inplace = self._check_inplace_deprecation(inplace, "dropna")
         inplace = validate_bool_kwarg(inplace, "inplace")
         ignore_index = validate_bool_kwarg(ignore_index, "ignore_index")
         # Validate the axis parameter
@@ -7131,10 +5626,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         if self._can_hold_na:
             result = remove_na_arraylike(self)
-        elif not inplace:
-            result = self.copy(deep=False)
         else:
-            result = self
+            if not inplace:
+                result = self.copy(deep=False)
+            else:
+                result = self
 
         if ignore_index:
             result.index = default_index(len(result))
@@ -7150,7 +5646,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     def to_timestamp(
         self,
         freq: Frequency | None = None,
-        how: ToTimestampHow = "start",
+        how: Literal["s", "e", "start", "end"] = "start",
         copy: bool | lib.NoDefault = lib.no_default,
     ) -> Series:
         """
@@ -7162,21 +5658,25 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         ----------
         freq : str, default frequency of PeriodIndex
             Desired frequency.
-        how : {'start', 'end', 's', 'e'}, default 'start'
+        how : {'s', 'e', 'start', 'end'}
             Convention for converting period to timestamp; start of period
-            vs. end. Case-insensitive.
+            vs. end.
         copy : bool, default False
-            This keyword is now ignored; changing its value will have no
-            impact on the method.
+            Whether or not to return a copy.
+
+            .. note::
+                The `copy` keyword will change behavior in pandas 3.0.
+                `Copy-on-Write
+                <https://pandas.pydata.org/docs/dev/user_guide/copy_on_write.html>`__
+                will be enabled by default, which means that all methods with a
+                `copy` keyword will use a lazy copy mechanism to defer the copy and
+                ignore the `copy` keyword. The `copy` keyword will be removed in a
+                future version of pandas.
+
+                You can already get the future behavior and improvements through
+                enabling copy on write ``pd.options.mode.copy_on_write = True``
 
             .. deprecated:: 3.0.0
-
-                This keyword is ignored and will be removed in pandas 4.0. Since
-                pandas 3.0, this method always returns a new object using a lazy
-                copy mechanism that defers copies until necessary
-                (Copy-on-Write). See the `user guide on Copy-on-Write
-                <https://pandas.pydata.org/docs/dev/user_guide/migration.html>`__
-                for more details.
 
         Returns
         -------
@@ -7234,26 +5734,26 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         Convert Series from DatetimeIndex to PeriodIndex.
 
-        This method converts the DatetimeIndex of the Series into a
-        PeriodIndex with a specified frequency, which is useful when
-        period-based indexing is preferred over exact timestamps.
-
         Parameters
         ----------
         freq : str, default None
             Frequency associated with the PeriodIndex.
         copy : bool, default False
-            This keyword is now ignored; changing its value will have no
-            impact on the method.
+            Whether or not to return a copy.
+
+            .. note::
+                The `copy` keyword will change behavior in pandas 3.0.
+                `Copy-on-Write
+                <https://pandas.pydata.org/docs/dev/user_guide/copy_on_write.html>`__
+                will be enabled by default, which means that all methods with a
+                `copy` keyword will use a lazy copy mechanism to defer the copy and
+                ignore the `copy` keyword. The `copy` keyword will be removed in a
+                future version of pandas.
+
+                You can already get the future behavior and improvements through
+                enabling copy on write ``pd.options.mode.copy_on_write = True``
 
             .. deprecated:: 3.0.0
-
-                This keyword is ignored and will be removed in pandas 4.0. Since
-                pandas 3.0, this method always returns a new object using a lazy
-                copy mechanism that defers copies until necessary
-                (Copy-on-Write). See the `user guide on Copy-on-Write
-                <https://pandas.pydata.org/docs/dev/user_guide/migration.html>`__
-                for more details.
 
         Returns
         -------
@@ -7358,25 +5858,20 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     # ----------------------------------------------------------------------
     # Template-Based Arithmetic/Comparison Methods
 
-    def _cmp_method(self, other, op) -> Series:
+    def _cmp_method(self, other, op):
         res_name = ops.get_op_result_name(self, other)
 
         if isinstance(other, Series) and not self._indexed_same(other):
             raise ValueError("Can only compare identically-labeled Series objects")
 
         lvalues = self._values
-        if not isinstance(lvalues, ExtensionArray) and lvalues.dtype != object:
-            # For EA-backed values the warning is emitted by the EA's own
-            # _cmp_method; object dtype already treats a non-standard listlike
-            # as scalar-like, so it needs no warning either (GH#62423).
-            ops.maybe_warn_listlike(other)
         rvalues = extract_array(other, extract_numpy=True, extract_range=True)
 
         res_values = ops.comparison_op(lvalues, rvalues, op)
 
-        return self._construct_result(res_values, name=res_name, other=other)
+        return self._construct_result(res_values, name=res_name)
 
-    def _logical_method(self, other, op) -> Series:
+    def _logical_method(self, other, op):
         res_name = ops.get_op_result_name(self, other)
         self, other = self._align_for_op(other, align_asobject=True)
 
@@ -7384,9 +5879,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         rvalues = extract_array(other, extract_numpy=True, extract_range=True)
 
         res_values = ops.logical_op(lvalues, rvalues, op)
-        return self._construct_result(res_values, name=res_name, other=other)
+        return self._construct_result(res_values, name=res_name)
 
-    def _arith_method(self, other, op) -> Series:
+    def _arith_method(self, other, op):
         self, other = self._align_for_op(other)
         return base.IndexOpsMixin._arith_method(self, other, op)
 
@@ -7446,31 +5941,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             result = func(this_vals, other_vals)
 
         name = ops.get_op_result_name(self, other)
-
-        out = this._construct_result(result, name, other)
-        return cast("Series", out)
-
-    @overload
-    def _construct_result(
-        self,
-        result: ArrayLike,
-        name: Hashable,
-        other: AnyArrayLike | DataFrame,
-    ) -> Series: ...
-
-    @overload
-    def _construct_result(
-        self,
-        result: tuple[ArrayLike, ArrayLike],
-        name: Hashable,
-        other: AnyArrayLike | DataFrame,
-    ) -> tuple[Series, Series]: ...
+        out = this._construct_result(result, name)
+        return cast(Series, out)
 
     def _construct_result(
-        self,
-        result: ArrayLike | tuple[ArrayLike, ArrayLike],
-        name: Hashable,
-        other: AnyArrayLike | DataFrame,
+        self, result: ArrayLike | tuple[ArrayLike, ArrayLike], name: Hashable
     ) -> Series | tuple[Series, Series]:
         """
         Construct an appropriately-labelled Series from the result of an op.
@@ -7479,7 +5954,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         ----------
         result : ndarray or ExtensionArray
         name : Label
-        other : Series, DataFrame or array-like
 
         Returns
         -------
@@ -7489,8 +5963,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         if isinstance(result, tuple):
             # produced by divmod or rdivmod
 
-            res1 = self._construct_result(result[0], name=name, other=other)
-            res2 = self._construct_result(result[1], name=name, other=other)
+            res1 = self._construct_result(result[0], name=name)
+            res2 = self._construct_result(result[1], name=name)
 
             # GH#33427 assertions to keep mypy happy
             assert isinstance(res1, Series)
@@ -7502,16 +5976,13 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         dtype = getattr(result, "dtype", None)
         out = self._constructor(result, index=self.index, dtype=dtype, copy=False)
         out = out.__finalize__(self)
-        out = out.__finalize__(other)
 
         # Set the result's name after __finalize__ is called because __finalize__
         #  would set it back to self.name
         out.name = name
         return out
 
-    def _flex_method(
-        self, other, op, *, level=None, fill_value=None, axis: Axis = 0
-    ) -> Series:
+    def _flex_method(self, other, op, *, level=None, fill_value=None, axis: Axis = 0):
         if axis is not None:
             self._get_axis_number(axis)
 
@@ -7519,30 +5990,13 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         if isinstance(other, Series):
             return self._binop(other, op, level=level, fill_value=fill_value)
-        elif (isinstance(other, np.ndarray) and other.ndim > 0) or isinstance(
-            other, (list, tuple, ExtensionArray)
-        ):
-            if isinstance(other, tuple):
-                op_name = op.__name__.strip("_")
-                warnings.warn(
-                    f"Series.{op_name} with a tuple is deprecated and will be "
-                    "treated as scalar-like in a future version. "
-                    "Explicitly wrap in a numpy array instead.",
-                    Pandas4Warning,
-                    stacklevel=find_stack_level(),
-                )
+        elif isinstance(other, (np.ndarray, list, tuple)):
             if len(other) != len(self):
                 raise ValueError("Lengths must be equal")
             other = self._constructor(other, self.index, copy=False)
             result = self._binop(other, op, level=level, fill_value=fill_value)
             result._name = res_name
             return result
-        elif isinstance(other, ABCDataFrame):
-            # GH#46179
-            raise TypeError(
-                f"Series.{op.__name__.strip('_')} does not support a DataFrame "
-                f"`other`. Use df.{op.__name__.strip('_')}(ser) instead."
-            )
         else:
             if fill_value is not None:
                 if isna(other):
@@ -7561,23 +6015,21 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         Return Equal to of series and other, element-wise (binary operator `eq`).
 
-        Equivalent to ``series == other``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
+        Equivalent to ``series == other``, but with support to substitute a fill_value
+        for missing data in either one of the inputs.
 
         Parameters
         ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``==`` but with possibly different results due
-            to the other arguments.
+        other : Series or scalar value
+            The second operand in this operation.
         level : int or name
             Broadcast across a level, matching Index values on the
             passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
+        fill_value : None or float value, default None (NaN)
+            Fill existing missing (NaN) values, and any new element needed for
+            successful Series alignment, with this value before computation.
+            If data in both corresponding Series locations is missing
+            the result of filling (at that location) will be missing.
         axis : {0 or 'index'}
             Unused. Parameter needed for compatibility with DataFrame.
 
@@ -7621,66 +6073,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             other, operator.eq, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("ne", "series"))
     def ne(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Not equal to of series and other, element-wise (binary operator `ne`).
-
-        Equivalent to ``series != other``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``!=`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.eq : Reverse of the Not equal to operator, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.ne(b, fill_value=0)
-        a    False
-        b     True
-        c     True
-        d     True
-        e     True
-        dtype: bool
-        """
         return self._flex_method(
             other, operator.ne, level=level, fill_value=fill_value, axis=axis
         )
@@ -7695,18 +6089,16 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         Parameters
         ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``<=`` but with possibly different results due
-            to the other arguments.
+        other : Series or scalar value
+            The second operand in this operation.
         level : int or name
             Broadcast across a level, matching Index values on the
             passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
+        fill_value : None or float value, default None (NaN)
+            Fill existing missing (NaN) values, and any new element needed for
+            successful Series alignment, with this value before computation.
+            If data in both corresponding Series locations is missing
+            the result of filling (at that location) will be missing.
         axis : {0 or 'index'}
             Unused. Parameter needed for compatibility with DataFrame.
 
@@ -7753,69 +6145,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             other, operator.le, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("lt", "series"))
     def lt(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Less than of series and other, element-wise (binary operator `lt`).
-
-        Equivalent to ``series < other``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``<`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.gt : Element-wise Greater than, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan, 1], index=["a", "b", "c", "d", "e"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        e    1.0
-        dtype: float64
-        >>> b = pd.Series([0, 1, 2, np.nan, 1], index=["a", "b", "c", "d", "f"])
-        >>> b
-        a    0.0
-        b    1.0
-        c    2.0
-        d    NaN
-        f    1.0
-        dtype: float64
-        >>> a.lt(b, fill_value=0)
-        a    False
-        b    False
-        c     True
-        d    False
-        e    False
-        f     True
-        dtype: bool
-        """
         return self._flex_method(
             other, operator.lt, level=level, fill_value=fill_value, axis=axis
         )
@@ -7830,18 +6161,16 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         Parameters
         ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``>=`` but with possibly different results due
-            to the other arguments.
+        other : Series or scalar value
+            The second operand in this operation.
         level : int or name
             Broadcast across a level, matching Index values on the
             passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
+        fill_value : None or float value, default None (NaN)
+            Fill existing missing (NaN) values, and any new element needed for
+            successful Series alignment, with this value before computation.
+            If data in both corresponding Series locations is missing
+            the result of filling (at that location) will be missing.
         axis : {0 or 'index'}
             Unused. Parameter needed for compatibility with DataFrame.
 
@@ -7889,69 +6218,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             other, operator.ge, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("gt", "series"))
     def gt(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Greater than of series and other, element-wise (binary operator `gt`).
-
-        Equivalent to ``series > other``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``>`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.lt : Reverse of the Greater than operator, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan, 1], index=["a", "b", "c", "d", "e"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        e    1.0
-        dtype: float64
-        >>> b = pd.Series([0, 1, 2, np.nan, 1], index=["a", "b", "c", "d", "f"])
-        >>> b
-        a    0.0
-        b    1.0
-        c    2.0
-        d    NaN
-        f    1.0
-        dtype: float64
-        >>> a.gt(b, fill_value=0)
-        a     True
-        b    False
-        c    False
-        d    False
-        e     True
-        f    False
-        dtype: bool
-        """
         return self._flex_method(
             other, operator.gt, level=level, fill_value=fill_value, axis=axis
         )
@@ -7960,8 +6228,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         """
         Return Addition of series and other, element-wise (binary operator `add`).
 
-        Equivalent to ``series + other``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
+        Equivalent to ``series + other``, but with support to substitute a fill_value
+        for missing data in either one of the inputs.
 
         Parameters
         ----------
@@ -7970,11 +6238,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         level : int or name
             Broadcast across a level, matching Index values on the
             passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
+        fill_value : None or float value, default None (NaN)
+            Fill existing missing (NaN) values, and any new element needed for
+            successful Series alignment, with this value before computation.
+            If data in both corresponding Series locations is missing
+            the result of filling (at that location) will be missing.
         axis : {0 or 'index'}
             Unused. Parameter needed for compatibility with DataFrame.
 
@@ -8018,196 +6286,22 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             other, operator.add, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("radd", "series"))
     def radd(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Addition of series and other, element-wise (binary operator `radd`).
-
-        Equivalent to ``other + series``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``+`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.add : Element-wise Addition, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.radd(b, fill_value=1.0)
-        a    2.0
-        b    2.0
-        c    2.0
-        d    2.0
-        e    NaN
-        dtype: float64
-        """
         return self._flex_method(
             other, roperator.radd, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("sub", "series"))
     def sub(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Subtraction of series and other, element-wise (binary operator `sub`).
-
-        Equivalent to ``series - other``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``-`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.rsub : Reverse of the Subtraction operator, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.subtract(b, fill_value=0)
-        a    0.0
-        b    1.0
-        c    1.0
-        d   -1.0
-        e    NaN
-        dtype: float64
-        """
         return self._flex_method(
             other, operator.sub, level=level, fill_value=fill_value, axis=axis
         )
 
     subtract = sub
 
+    @Appender(ops.make_flex_doc("rsub", "series"))
     def rsub(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Subtraction of series and other, element-wise (binary operator `rsub`).
-
-        Equivalent to ``other - series``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``-`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.sub : Element-wise Subtraction, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.rsub(b, fill_value=0)
-        a    0.0
-        b   -1.0
-        c   -1.0
-        d    1.0
-        e    NaN
-        dtype: float64
-        """
         return self._flex_method(
             other, roperator.rsub, level=level, fill_value=fill_value, axis=axis
         )
@@ -8232,11 +6326,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         level : int or name
             Broadcast across a level, matching Index values on the
             passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
+        fill_value : None or float value, default None (NaN)
+            Fill existing missing (NaN) values, and any new element needed for
+            successful Series alignment, with this value before computation.
+            If data in both corresponding Series locations is missing
+            the result of filling (at that location) will be missing.
         axis : {0 or 'index'}
             Unused. Parameter needed for compatibility with DataFrame.
 
@@ -8288,67 +6382,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
     multiply = mul
 
+    @Appender(ops.make_flex_doc("rmul", "series"))
     def rmul(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Multiplication of series and other, \
-        element-wise (binary operator `rmul`).
-
-        Equivalent to ``other * series``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``*`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.mul : Element-wise Multiplication, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.rmul(b, fill_value=0)
-        a    1.0
-        b    0.0
-        c    0.0
-        d    0.0
-        e    NaN
-        dtype: float64
-        """
         return self._flex_method(
             other, roperator.rmul, level=level, fill_value=fill_value, axis=axis
         )
@@ -8368,11 +6403,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         level : int or name
             Broadcast across a level, matching Index values on the
             passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
+        fill_value : None or float value, default None (NaN)
+            Fill existing missing (NaN) values, and any new element needed for
+            successful Series alignment, with this value before computation.
+            If data in both corresponding Series locations is missing
+            the result of filling (at that location) will be missing.
         axis : {0 or 'index'}
             Unused. Parameter needed for compatibility with DataFrame.
 
@@ -8419,199 +6454,22 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     div = truediv
     divide = truediv
 
+    @Appender(ops.make_flex_doc("rtruediv", "series"))
     def rtruediv(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Floating division of series and other, \
-        element-wise (binary operator `rtruediv`).
-
-        Equivalent to ``other / series``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``/`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.truediv : Element-wise Floating division, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.rtruediv(b, fill_value=0)
-        a    1.0
-        b    0.0
-        c    0.0
-        d    inf
-        e    NaN
-        dtype: float64
-        """
         return self._flex_method(
             other, roperator.rtruediv, level=level, fill_value=fill_value, axis=axis
         )
 
     rdiv = rtruediv
 
+    @Appender(ops.make_flex_doc("floordiv", "series"))
     def floordiv(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Integer division of series and other, \
-        element-wise (binary operator `floordiv`).
-
-        Equivalent to ``series // other``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``//`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.rfloordiv : Reverse of the Integer division operator, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.floordiv(b, fill_value=0)
-        a    1.0
-        b    inf
-        c    inf
-        d    0.0
-        e    NaN
-        dtype: float64
-        """
         return self._flex_method(
             other, operator.floordiv, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("rfloordiv", "series"))
     def rfloordiv(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Integer division of series and other, \
-        element-wise (binary operator `rfloordiv`).
-
-        Equivalent to ``other // series``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``//`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.floordiv : Element-wise Integer division, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.rfloordiv(b, fill_value=0)
-        a    1.0
-        b    0.0
-        c    0.0
-        d    inf
-        e    NaN
-        dtype: float64
-        """
         return self._flex_method(
             other, roperator.rfloordiv, level=level, fill_value=fill_value, axis=axis
         )
@@ -8630,11 +6488,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         level : int or name
             Broadcast across a level, matching Index values on the
             passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
+        fill_value : None or float value, default None (NaN)
+            Fill existing missing (NaN) values, and any new element needed for
+            successful Series alignment, with this value before computation.
+            If data in both corresponding Series locations is missing
+            the result of filling (at that location) will be missing.
         axis : {0 or 'index'}
             Unused. Parameter needed for compatibility with DataFrame.
 
@@ -8678,339 +6536,32 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             other, operator.mod, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("rmod", "series"))
     def rmod(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Modulo of series and other, \
-        element-wise (binary operator `rmod`).
-
-        Equivalent to ``other % series``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``%`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.mod : Element-wise Modulo, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.rmod(b, fill_value=0)
-        a    0.0
-        b    0.0
-        c    0.0
-        d    NaN
-        e    NaN
-        dtype: float64
-        """
         return self._flex_method(
             other, roperator.rmod, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("pow", "series"))
     def pow(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Exponential power of series and other, \
-        element-wise (binary operator `pow`).
-
-        Equivalent to ``series ** other``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``**`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.rpow : Reverse of the Exponential power operator, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.pow(b, fill_value=0)
-        a    1.0
-        b    1.0
-        c    1.0
-        d    0.0
-        e    NaN
-        dtype: float64
-        """
         return self._flex_method(
             other, operator.pow, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("rpow", "series"))
     def rpow(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Exponential power of series and other, \
-        element-wise (binary operator `rpow`).
-
-        Equivalent to ``other ** series``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``**`` but with possibly different results due
-            to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.pow : Element-wise Exponential power, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.rpow(b, fill_value=0)
-        a    1.0
-        b    0.0
-        c    0.0
-        d    1.0
-        e    NaN
-        dtype: float64
-        """
         return self._flex_method(
             other, roperator.rpow, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("divmod", "series"))
     def divmod(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Integer division and modulo of series and other, \
-        element-wise (binary operator `divmod`).
-
-        Equivalent to ``divmod(series, other)``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``//`` and ``%`` but with possibly different
-            results due to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        2-Tuple of Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.rdivmod : Reverse of the Integer division and modulo operator, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.divmod(b, fill_value=0)
-        (a    1.0
-         b    inf
-         c    inf
-         d    0.0
-         e    NaN
-         dtype: float64,
-         a    0.0
-         b    NaN
-         c    NaN
-         d    0.0
-         e    NaN
-         dtype: float64)
-        """
         return self._flex_method(
             other, divmod, level=level, fill_value=fill_value, axis=axis
         )
 
+    @Appender(ops.make_flex_doc("rdivmod", "series"))
     def rdivmod(self, other, level=None, fill_value=None, axis: Axis = 0) -> Series:
-        """
-        Return Integer division and modulo of series and other, \
-        element-wise (binary operator `rdivmod`).
-
-        Equivalent to ``other divmod series``, but with support to substitute a
-        fill_value for missing data in either one of the inputs.
-
-        Parameters
-        ----------
-        other : object
-            When a Series is provided, will align on indexes. For all other types,
-            will behave the same as ``//`` and ``%`` but with possibly different
-            results due to the other arguments.
-        level : int or name
-            Broadcast across a level, matching Index values on the
-            passed MultiIndex level.
-        fill_value : scalar or None, default None
-            Fill NA values, whether present in the original data or introduced
-            by alignment, with this value before computation. Positions where
-            both inputs are NA are left unfilled and behave as NA does for the
-            operation.
-        axis : {0 or 'index'}
-            Unused. Parameter needed for compatibility with DataFrame.
-
-        Returns
-        -------
-        2-Tuple of Series
-            The result of the operation.
-
-        See Also
-        --------
-        Series.divmod : Element-wise Integer division and modulo, see
-            `Python documentation
-            <https://docs.python.org/3/reference/datamodel.html#emulating-numeric-types>`_
-            for more details.
-
-        Examples
-        --------
-        >>> a = pd.Series([1, 1, 1, np.nan], index=["a", "b", "c", "d"])
-        >>> a
-        a    1.0
-        b    1.0
-        c    1.0
-        d    NaN
-        dtype: float64
-        >>> b = pd.Series([1, np.nan, 1, np.nan], index=["a", "b", "d", "e"])
-        >>> b
-        a    1.0
-        b    NaN
-        d    1.0
-        e    NaN
-        dtype: float64
-        >>> a.rdivmod(b, fill_value=0)
-        (a    1.0
-         b    0.0
-         c    0.0
-         d    inf
-         e    NaN
-         dtype: float64,
-         a    0.0
-         b    0.0
-         c    0.0
-         d    NaN
-         e    NaN
-         dtype: float64)
-        """
         return self._flex_method(
             other, roperator.rdivmod, level=level, fill_value=fill_value, axis=axis
         )
@@ -9043,7 +6594,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         if isinstance(delegate, ExtensionArray):
             # dispatch to ExtensionArray interface
-            result = delegate._reduce(name, skipna=skipna, **kwds)
+            return delegate._reduce(name, skipna=skipna, **kwds)
 
         else:
             # dispatch to numpy arrays
@@ -9057,14 +6608,9 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
                     f"Series.{name} does not allow {kwd_name}={numeric_only} "
                     "with non-numeric dtypes."
                 )
-            result = op(delegate, skipna=skipna, **kwds)
+            return op(delegate, skipna=skipna, **kwds)
 
-        # any/all coerce to bool for all dtypes, so unbox even for object
-        result = maybe_unbox_numpy_scalar(
-            result, object_with_dtype=None if name in ["any", "all"] else self
-        )
-        return result
-
+    @Appender(make_doc("any", ndim=1))
     # error: Signature of "any" incompatible with supertype "NDFrame"
     def any(  # type: ignore[override]
         self,
@@ -9074,120 +6620,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         skipna: bool = True,
         **kwargs,
     ) -> bool:
-        """
-        Return whether any element is True, potentially over an axis.
-
-        Returns False unless there is at least one element within a series or
-        along a Dataframe axis that is True or equivalent (e.g. non-zero or
-        non-empty).
-
-        Parameters
-        ----------
-        axis : {0 or 'index', 1 or 'columns', None}, default 0
-            Indicate which axis or axes should be reduced. For `Series` this parameter
-            is unused and defaults to 0.
-
-            * 0 / 'index' : reduce the index, return a Series whose index is the
-              original column labels.
-            * 1 / 'columns' : reduce the columns, return a Series whose index is the
-              original index.
-            * None : reduce all axes, return a scalar.
-
-        bool_only : bool, default False
-            Include only boolean columns. Not implemented for Series.
-        skipna : bool, default True
-            Exclude NA/null values. If the entire row/column is NA and skipna is
-            True, then the result will be False, as for an empty row/column.
-            If skipna is False, NA values are treated as True for NumPy-backed
-            dtypes (since they are not equal to zero). For nullable dtypes such
-            as ``boolean``, NA values propagate following
-            :ref:`Kleene logic <boolean.kleene>`.
-        **kwargs : any, default None
-            Additional keywords have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
-
-        Returns
-        -------
-        Series or scalar
-            If axis=None, then a scalar boolean is returned.
-            Otherwise a Series is returned with index matching the index argument.
-
-        See Also
-        --------
-        numpy.any : Numpy version of this method.
-        Series.any : Return whether any element is True.
-        Series.all : Return whether all elements are True.
-        DataFrame.any : Return whether any element is True over requested axis.
-        DataFrame.all : Return whether all elements are True over requested axis.
-
-        Examples
-        --------
-        **Series**
-
-        For Series input, the output is a scalar indicating whether any element
-        is True.
-
-        >>> pd.Series([False, False]).any()
-        False
-        >>> pd.Series([True, False]).any()
-        True
-        >>> pd.Series([], dtype="float64").any()
-        False
-        >>> pd.Series([np.nan]).any()
-        False
-        >>> pd.Series([np.nan]).any(skipna=False)
-        True
-
-        **DataFrame**
-
-        Whether each column contains at least one True element (the default).
-
-        >>> df = pd.DataFrame({"A": [1, 2], "B": [0, 2], "C": [0, 0]})
-        >>> df
-           A  B  C
-        0  1  0  0
-        1  2  2  0
-
-        >>> df.any()
-        A     True
-        B     True
-        C    False
-        dtype: bool
-
-        Aggregating over the columns.
-
-        >>> df = pd.DataFrame({"A": [True, False], "B": [1, 2]})
-        >>> df
-               A  B
-        0   True  1
-        1  False  2
-
-        >>> df.any(axis="columns")
-        0    True
-        1    True
-        dtype: bool
-
-        >>> df = pd.DataFrame({"A": [True, False], "B": [1, 0]})
-        >>> df
-               A  B
-        0   True  1
-        1  False  0
-
-        >>> df.any(axis="columns")
-        0    True
-        1    False
-        dtype: bool
-
-        Aggregating over the entire DataFrame with ``axis=None``.
-
-        >>> df.any(axis=None)
-        True
-
-        `any` for an empty DataFrame is an empty Series.
-
-        >>> pd.DataFrame([]).any()
-        Series([], dtype: bool)
-        """
         nv.validate_logical_func((), kwargs, fname="any")
         validate_bool_kwarg(skipna, "skipna", none_allowed=False)
         return self._reduce(
@@ -9199,7 +6631,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             filter_type="bool",
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="all")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="all")
+    @Appender(make_doc("all", ndim=1))
     def all(
         self,
         axis: Axis = 0,
@@ -9207,93 +6640,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         skipna: bool = True,
         **kwargs,
     ) -> bool:
-        """
-        Return whether all elements are True, potentially over an axis.
-
-        Returns True unless there at least one element within a series or
-        along a Dataframe axis that is False or equivalent (e.g. zero or
-        empty).
-
-        Parameters
-        ----------
-        axis : {0 or 'index', 1 or 'columns', None}, default 0
-            Indicate which axis or axes should be reduced. For `Series` this parameter
-            is unused and defaults to 0.
-
-            * 0 / 'index' : reduce the index, return a Series whose index is the
-              original column labels.
-            * 1 / 'columns' : reduce the columns, return a Series whose index is the
-              original index.
-            * None : reduce all axes, return a scalar.
-
-        bool_only : bool, default False
-            Include only boolean columns. Not implemented for Series.
-        skipna : bool, default True
-            Exclude NA/null values. If the entire row/column is NA and skipna is
-            True, then the result will be True, as for an empty row/column.
-            If skipna is False, NA values are treated as True for NumPy-backed
-            dtypes (since they are not equal to zero). For nullable dtypes such
-            as ``boolean``, NA values propagate following
-            :ref:`Kleene logic <boolean.kleene>`.
-        **kwargs : any, default None
-            Additional keywords have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
-
-        Returns
-        -------
-        Series or scalar
-            If axis=None, then a scalar boolean is returned.
-            Otherwise a Series is returned with index matching the index argument.
-
-        See Also
-        --------
-        Series.all : Return True if all elements are True.
-        DataFrame.any : Return True if one (or more) elements are True.
-
-        Examples
-        --------
-        **Series**
-
-        >>> pd.Series([True, True]).all()
-        True
-        >>> pd.Series([True, False]).all()
-        False
-        >>> pd.Series([], dtype="float64").all()
-        True
-        >>> pd.Series([np.nan]).all()
-        True
-        >>> pd.Series([np.nan]).all(skipna=False)
-        True
-
-        **DataFrames**
-
-        Create a DataFrame from a dictionary.
-
-        >>> df = pd.DataFrame({"col1": [True, True], "col2": [True, False]})
-        >>> df
-           col1   col2
-        0  True   True
-        1  True  False
-
-        Default behaviour checks if values in each column all return True.
-
-        >>> df.all()
-        col1     True
-        col2    False
-        dtype: bool
-
-        Specify ``axis='columns'`` to check if values in each row all return True.
-
-        >>> df.all(axis="columns")
-        0     True
-        1    False
-        dtype: bool
-
-        Or ``axis=None`` for whether every value is True.
-
-        >>> df.all(axis=None)
-        False
-        """
         nv.validate_logical_func((), kwargs, fname="all")
         validate_bool_kwarg(skipna, "skipna", none_allowed=False)
         return self._reduce(
@@ -9305,7 +6651,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             filter_type="bool",
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="min")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="min")
     def min(
         self,
         axis: Axis | None = 0,
@@ -9335,12 +6681,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         numeric_only : bool, default False
             Include only float, int, boolean columns.
         **kwargs
-            Additional keyword arguments have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
+            Additional keyword arguments to be passed to the function.
 
         Returns
         -------
-        scalar
+        scalar or Series (if level specified)
             The minimum of the values in the Series.
 
         See Also
@@ -9377,7 +6722,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             self, axis=axis, skipna=skipna, numeric_only=numeric_only, **kwargs
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="max")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="max")
     def max(
         self,
         axis: Axis | None = 0,
@@ -9407,12 +6752,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         numeric_only : bool, default False
             Include only float, int, boolean columns.
         **kwargs
-            Additional keyword arguments have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
+            Additional keyword arguments to be passed to the function.
 
         Returns
         -------
-        scalar
+        scalar or Series (if level specified)
             The maximum of the values in the Series.
 
         See Also
@@ -9449,7 +6793,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             self, axis=axis, skipna=skipna, numeric_only=numeric_only, **kwargs
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="sum")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="sum")
     def sum(
         self,
         axis: Axis | None = None,
@@ -9486,12 +6830,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             The required number of valid values to perform the operation. If fewer than
             ``min_count`` non-NA values are present the result will be NA.
         **kwargs
-            Additional keyword arguments have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
+            Additional keyword arguments to be passed to the function.
 
         Returns
         -------
-        scalar
+        scalar or Series (if level specified)
             Sum of the values for the requested axis.
 
         See Also
@@ -9551,7 +6894,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             **kwargs,
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="prod")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="prod")
+    @doc(make_doc("prod", ndim=1))
     def prod(
         self,
         axis: Axis | None = None,
@@ -9560,74 +6904,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         min_count: int = 0,
         **kwargs,
     ):
-        """
-        Return the product of the values over the requested axis.
-
-        By default, missing values are skipped. To include them in the calculation,
-        set ``skipna`` parameter to False.
-
-        Parameters
-        ----------
-        axis : {index (0)}
-            Axis for the function to be applied on.
-            For `Series` this parameter is unused and defaults to 0.
-
-            .. warning::
-                The behavior of DataFrame.prod with ``axis=None`` is deprecated,
-                in a future version this will reduce over both axes and return a scalar
-                To retain the old behavior, pass axis=0 (or do not pass axis).
-
-            .. versionadded:: 2.0.0
-        skipna : bool, default True
-            Exclude NA/null values when computing the result.
-        numeric_only : bool, default False
-            Include only float, int, boolean columns. Not implemented for Series.
-        min_count : int, default 0
-            The required number of valid values to perform the operation. If fewer than
-            ``min_count`` non-NA values are present the result will be NA.
-        **kwargs
-            Additional keyword arguments have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
-
-        Returns
-        -------
-        scalar
-            Value containing the calculation referenced in the description.
-
-        See Also
-        --------
-        Series.sum : Return the sum.
-        Series.min : Return the minimum.
-        Series.max : Return the maximum.
-        Series.idxmin : Return the index of the minimum.
-        Series.idxmax : Return the index of the maximum.
-
-        DataFrame.sum : Return the sum over the requested axis.
-        DataFrame.min : Return the minimum over the requested axis.
-        DataFrame.max : Return the maximum over the requested axis.
-        DataFrame.idxmin : Return the index of the minimum over the requested axis.
-        DataFrame.idxmax : Return the index of the maximum over the requested axis.
-
-        Examples
-        --------
-        By default, the product of an empty or all-NA Series is ``1``
-
-        >>> pd.Series([], dtype="float64").prod()
-        1.0
-
-        This can be controlled with the ``min_count`` parameter
-
-        >>> pd.Series([], dtype="float64").prod(min_count=1)
-        nan
-
-        Thanks to the ``skipna`` parameter, ``min_count`` handles all-NA and
-        empty series identically.
-
-        >>> pd.Series([np.nan]).prod()
-        1.0
-        >>> pd.Series([np.nan]).prod(min_count=1)
-        nan
-        """
         return NDFrame.prod(
             self,
             axis=axis,
@@ -9637,7 +6913,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             **kwargs,
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="mean")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="mean")
     def mean(
         self,
         axis: Axis | None = 0,
@@ -9647,9 +6923,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     ) -> Any:
         """
         Return the mean of the values over the requested axis.
-
-        This method computes the arithmetic mean of the Series values,
-        optionally skipping missing values.
 
         Parameters
         ----------
@@ -9667,12 +6940,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         numeric_only : bool, default False
             Include only float, int, boolean columns.
         **kwargs
-            Additional keyword arguments have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
+            Additional keyword arguments to be passed to the function.
 
         Returns
         -------
-        scalar
+        scalar or Series (if level specified)
             Mean of the values for the requested axis.
 
         See Also
@@ -9695,9 +6967,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             self, axis=axis, skipna=skipna, numeric_only=numeric_only, **kwargs
         )
 
-    @deprecate_nonkeyword_arguments(
-        Pandas4Warning, allowed_args=["self"], name="median"
-    )
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="median")
     def median(
         self,
         axis: Axis | None = 0,
@@ -9707,9 +6977,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     ) -> Any:
         """
         Return the median of the values over the requested axis.
-
-        This method computes the median (middle value) of the Series values,
-        optionally skipping missing values.
 
         Parameters
         ----------
@@ -9727,12 +6994,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         numeric_only : bool, default False
             Include only float, int, boolean columns.
         **kwargs
-            Additional keyword arguments have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
+            Additional keyword arguments to be passed to the function.
 
         Returns
         -------
-        scalar
+        scalar or Series (if level specified)
             Median of the values for the requested axis.
 
         See Also
@@ -9782,7 +7048,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             self, axis=axis, skipna=skipna, numeric_only=numeric_only, **kwargs
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="sem")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="sem")
+    @doc(make_doc("sem", ndim=1))
     def sem(
         self,
         axis: Axis | None = None,
@@ -9791,47 +7058,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         numeric_only: bool = False,
         **kwargs,
     ):
-        """
-        Return unbiased standard error of the mean over requested axis.
-
-        Normalized by N-1 by default. This can be changed using the ddof argument
-
-        Parameters
-        ----------
-        axis : {index (0)}
-            This parameter is unused and defaults to 0.
-        skipna : bool, default True
-            Exclude NA/null values. If an entire row/column is NA, the result
-            will be NA.
-        ddof : int, default 1
-            Delta Degrees of Freedom. The divisor used in calculations is N - ddof,
-            where N represents the number of elements.
-        numeric_only : bool, default False
-            Include only float, int, boolean columns. Not implemented for Series.
-        **kwargs :
-            Additional keywords have no effect but might be accepted
-            for compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
-
-        Returns
-        -------
-        scalar
-            Unbiased standard error of the mean over requested axis.
-
-        See Also
-        --------
-        scipy.stats.sem : Compute standard error of the mean.
-        Series.std : Return sample standard deviation over requested axis.
-        Series.var : Return unbiased variance over requested axis.
-        Series.mean : Return the mean of the values over the requested axis.
-        Series.median : Return the median of the values over the requested axis.
-        Series.mode : Return the mode(s) of the Series.
-
-        Examples
-        --------
-        >>> s = pd.Series([1, 2, 3])
-        >>> round(s.sem(), 6)
-        0.57735
-        """
         return NDFrame.sem(
             self,
             axis=axis,
@@ -9841,7 +7067,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             **kwargs,
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="var")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="var")
     def var(
         self,
         axis: Axis | None = None,
@@ -9879,7 +7105,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
 
         Returns
         -------
-        scalar
+        scalar or Series (if level specified)
             Unbiased variance over requested axis.
 
         See Also
@@ -9928,7 +7154,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             **kwargs,
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="std")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="std")
+    @doc(make_doc("std", ndim=1))
     def std(
         self,
         axis: Axis | None = None,
@@ -9937,57 +7164,6 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         numeric_only: bool = False,
         **kwargs,
     ):
-        """
-        Return sample standard deviation.
-
-        Normalized by N-1 by default. This can be changed using the ddof argument.
-
-        Parameters
-        ----------
-        axis : {index (0)}
-            This parameter is unused and defaults to 0.
-        skipna : bool, default True
-            Exclude NA/null values. If Series is NA, the result
-            will be NA.
-        ddof : int, default 1
-            Delta Degrees of Freedom. The divisor used in calculations is N - ddof,
-            where N represents the number of elements.
-        numeric_only : bool, default False
-            Not implemented for Series.
-        **kwargs :
-            Additional keywords have no effect but might be accepted
-            for compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
-
-        Returns
-        -------
-        scalar
-            Standard deviation over all values in the Series.
-
-        See Also
-        --------
-        numpy.std : Compute the standard deviation along the specified axis.
-        Series.var : Return unbiased variance over requested axis.
-        Series.sem : Return unbiased standard error of the mean over requested axis.
-        Series.mean : Return the mean of the values over the requested axis.
-        Series.median : Return the median of the values over the requested axis.
-        Series.mode : Return the mode(s) of the Series.
-
-        Notes
-        -----
-        To have the same behaviour as ``numpy.std``, use ``ddof=0`` (instead of
-        the default ``ddof=1``) and ``skipna=False``.
-
-        Examples
-        --------
-        >>> s = pd.Series([1, 2, 3])
-        >>> s.std()
-        1.0
-
-        Alternatively, ``ddof=0`` can be set to normalize by $N$ instead of $N-1$:
-
-        >>> s.std(ddof=0)
-        0.816496580927726
-        """
         return NDFrame.std(
             self,
             axis=axis,
@@ -9997,7 +7173,8 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             **kwargs,
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="skew")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="skew")
+    @doc(make_doc("skew", ndim=1))
     def skew(
         self,
         axis: Axis | None = 0,
@@ -10005,45 +7182,11 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         numeric_only: bool = False,
         **kwargs,
     ):
-        """
-        Return unbiased skew over requested axis.
-
-        Normalized by N-1.
-
-        Parameters
-        ----------
-        axis : {index (0)}
-            This parameter is unused and defaults to 0.
-        skipna : bool, default True
-            Exclude NA/null values when computing the result.
-        numeric_only : bool, default False
-            Unused.
-        **kwargs
-            Additional keyword arguments have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
-
-        Returns
-        -------
-        scalar
-            Unbiased skew of the Series.
-
-        See Also
-        --------
-
-        Series.var : Return unbiased variance over requested axis.
-        Series.std : Return unbiased standard deviation over requested axis.
-
-        Examples
-        --------
-        >>> s = pd.Series([1, 2, 3])
-        >>> s.skew()
-        0.0
-        """
         return NDFrame.skew(
             self, axis=axis, skipna=skipna, numeric_only=numeric_only, **kwargs
         )
 
-    @deprecate_nonkeyword_arguments(Pandas4Warning, allowed_args=["self"], name="kurt")
+    @deprecate_nonkeyword_arguments(version="4.0", allowed_args=["self"], name="kurt")
     def kurt(
         self,
         axis: Axis | None = 0,
@@ -10074,8 +7217,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
             Include only float, int, boolean columns.
 
         **kwargs
-            Additional keyword arguments have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
+            Additional keyword arguments to be passed to the function.
 
         Returns
         -------
@@ -10097,7 +7239,7 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
         dog    2
         mouse  3
         dtype: int64
-        >>> round(s.kurt(), 6)
+        >>> s.kurt()
         1.5
         """
         return NDFrame.kurt(
@@ -10107,255 +7249,18 @@ class Series(base.IndexOpsMixin, NDFrame):  # type: ignore[misc]
     kurtosis = kurt
     product = prod
 
+    @doc(make_doc("cummin", ndim=1))
     def cummin(self, axis: Axis = 0, skipna: bool = True, *args, **kwargs) -> Self:
-        """
-        Return cumulative minimum over a Series.
-
-        Returns a Series of the same size containing the cumulative
-        minimum.
-
-        Parameters
-        ----------
-        axis : {0 or 'index'}, default 0
-            This parameter is unused and defaults to 0.
-        skipna : bool, default True
-            If the entire series is NA, the result will be NA.
-        *args, **kwargs
-            Additional keywords have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
-
-        Returns
-        -------
-        Series
-            Return cumulative minimum of the Series.
-
-        See Also
-        --------
-        core.window.expanding.Expanding.min : Similar functionality
-            but ignores ``NaN`` values.
-        Series.min : Return the minimum value of the Series.
-        Series.cummax : Return cumulative maximum.
-        Series.cumsum : Return cumulative sum.
-        Series.cumprod : Return cumulative product.
-
-        Examples
-        --------
-        >>> s = pd.Series([2, np.nan, 5, -1, 0])
-        >>> s
-        0    2.0
-        1    NaN
-        2    5.0
-        3   -1.0
-        4    0.0
-        dtype: float64
-
-        By default, NA values are ignored.
-
-        >>> s.cummin()
-        0    2.0
-        1    NaN
-        2    2.0
-        3   -1.0
-        4   -1.0
-        dtype: float64
-
-        To include NA values in the operation, use ``skipna=False``
-
-        >>> s.cummin(skipna=False)
-        0    2.0
-        1    NaN
-        2    NaN
-        3    NaN
-        4    NaN
-        dtype: float64
-        """
         return NDFrame.cummin(self, axis, skipna, *args, **kwargs)
 
+    @doc(make_doc("cummax", ndim=1))
     def cummax(self, axis: Axis = 0, skipna: bool = True, *args, **kwargs) -> Self:
-        """
-        Return cumulative maximum over a Series.
-
-        Returns a Series of the same size containing the cumulative
-        maximum.
-
-        Parameters
-        ----------
-        axis : {0 or 'index'}, default 0
-            This parameter is unused and defaults to 0.
-        skipna : bool, default True
-            Exclude NA/null values. If the series is NA, the result is NA.
-        *args, **kwargs
-            Additional keywords have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
-
-        Returns
-        -------
-        Series
-            Return cumulative maximum of Series.
-
-        See Also
-        --------
-        core.window.expanding.Expanding.max : Similar functionality
-            but ignores ``NaN`` values.
-        Series.max : Return the maximum over a Series.
-        Series.cummin : Return cumulative minimum.
-        Series.cumsum : Return cumulative sum.
-        Series.cumprod : Return cumulative product.
-
-        Examples
-        --------
-        >>> s = pd.Series([2, np.nan, 5, -1, 0])
-        >>> s
-        0    2.0
-        1    NaN
-        2    5.0
-        3   -1.0
-        4    0.0
-        dtype: float64
-
-        By default, NA values are ignored.
-
-        >>> s.cummax()
-        0    2.0
-        1    NaN
-        2    5.0
-        3    5.0
-        4    5.0
-        dtype: float64
-
-        To include NA values in the operation, use ``skipna=False``
-
-        >>> s.cummax(skipna=False)
-        0    2.0
-        1    NaN
-        2    NaN
-        3    NaN
-        4    NaN
-        dtype: float64
-        """
         return NDFrame.cummax(self, axis, skipna, *args, **kwargs)
 
+    @doc(make_doc("cumsum", ndim=1))
     def cumsum(self, axis: Axis = 0, skipna: bool = True, *args, **kwargs) -> Self:
-        """
-        Return cumulative sum over a Series.
-
-        Returns a Series of the same size containing the cumulative sum.
-
-        Parameters
-        ----------
-        axis : {0 or 'index'}, default 0
-            This parameter is unused and defaults to 0.
-        skipna : bool, default True
-            Exclude NA/null values. If entire series is NA, the result will be NA.
-        *args, **kwargs
-            Additional keywords have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
-
-        Returns
-        -------
-        Series
-            Return cumulative sum of Series.
-
-        See Also
-        --------
-        core.window.expanding.Expanding.sum : Similar functionality
-            but ignores ``NaN`` values.
-        Series.sum : Return the sum over Series.
-        Series.cummax : Return cumulative maximum.
-        Series.cummin : Return cumulative minimum.
-        Series.cumprod : Return cumulative product.
-
-        Examples
-        --------
-        >>> s = pd.Series([2, np.nan, 5, -1, 0])
-        >>> s
-        0    2.0
-        1    NaN
-        2    5.0
-        3   -1.0
-        4    0.0
-        dtype: float64
-
-        By default, NA values are ignored.
-
-        >>> s.cumsum()
-        0    2.0
-        1    NaN
-        2    7.0
-        3    6.0
-        4    6.0
-        dtype: float64
-
-        To include NA values in the operation, use ``skipna=False``
-
-        >>> s.cumsum(skipna=False)
-        0    2.0
-        1    NaN
-        2    NaN
-        3    NaN
-        4    NaN
-        dtype: float64
-        """
         return NDFrame.cumsum(self, axis, skipna, *args, **kwargs)
 
+    @doc(make_doc("cumprod", 1))
     def cumprod(self, axis: Axis = 0, skipna: bool = True, *args, **kwargs) -> Self:
-        """
-        Return cumulative product over a Series.
-
-        Returns a Series of the same size containing the cumulative
-        product.
-
-        Parameters
-        ----------
-        axis : {0 or 'index'}, default 0
-            This parameter is unused and defaults to 0.
-        skipna : bool, default True
-            Exclude NA/null values. If entire Series is NA, the result will be NA.
-        *args, **kwargs
-            Additional keywords have no effect but might be accepted for
-            compatibility with NumPy. See :ref:`gotchas.numpy_kwargs` for more.
-
-        Returns
-        -------
-        Series
-            Return cumulative product of Series.
-
-        See Also
-        --------
-        Series.prod : Return the product over Series.
-        Series.cummax : Return cumulative maximum.
-        Series.cummin : Return cumulative minimum.
-        Series.cumsum : Return cumulative sum.
-
-        Examples
-        --------
-        >>> s = pd.Series([2, np.nan, 5, -1, 0])
-        >>> s
-        0    2.0
-        1    NaN
-        2    5.0
-        3   -1.0
-        4    0.0
-        dtype: float64
-
-        By default, NA values are ignored.
-
-        >>> s.cumprod()
-        0     2.0
-        1     NaN
-        2    10.0
-        3   -10.0
-        4    -0.0
-        dtype: float64
-
-        To include NA values in the operation, use ``skipna=False``
-
-        >>> s.cumprod(skipna=False)
-        0    2.0
-        1    NaN
-        2    NaN
-        3    NaN
-        4    NaN
-        dtype: float64
-        """
         return NDFrame.cumprod(self, axis, skipna, *args, **kwargs)

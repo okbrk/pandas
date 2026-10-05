@@ -1,5 +1,4 @@
 from datetime import (
-    UTC,
     date,
     datetime,
     timedelta,
@@ -17,7 +16,7 @@ from pandas._libs import (
 )
 from pandas._libs.tslibs.dtypes import NpyDatetimeUnit
 
-import pandas as pd
+from pandas import Timestamp
 import pandas._testing as tm
 
 creso_infer = NpyDatetimeUnit.NPY_FR_GENERIC.value
@@ -46,7 +45,7 @@ class TestArrayToDatetimeResolutionInference:
         arr = np.array([None, dt2, dt2, dt2], dtype=object)
         result, tz = tslib.array_to_datetime(arr, creso=creso_infer)
         assert tz is None
-        expected = np.array([np.datetime64("NaT", "ns"), dt2, dt2, dt2], dtype="M8[s]")
+        expected = np.array([np.datetime64("NaT"), dt2, dt2, dt2], dtype="M8[s]")
         tm.assert_numpy_array_equal(result, expected)
 
     def test_infer_homogeoneous_dt64(self):
@@ -55,20 +54,16 @@ class TestArrayToDatetimeResolutionInference:
         arr = np.array([None, dt64, dt64, dt64], dtype=object)
         result, tz = tslib.array_to_datetime(arr, creso=creso_infer)
         assert tz is None
-        expected = np.array(
-            [np.datetime64("NaT", "ns"), dt64, dt64, dt64], dtype="M8[ms]"
-        )
+        expected = np.array([np.datetime64("NaT"), dt64, dt64, dt64], dtype="M8[ms]")
         tm.assert_numpy_array_equal(result, expected)
 
     def test_infer_homogeoneous_timestamps(self):
         dt = datetime(2023, 10, 27, 18, 3, 5, 678000)
-        ts = pd.Timestamp(dt).as_unit("ns")
+        ts = Timestamp(dt).as_unit("ns")
         arr = np.array([None, ts, ts, ts], dtype=object)
         result, tz = tslib.array_to_datetime(arr, creso=creso_infer)
         assert tz is None
-        expected = np.array(
-            [np.datetime64("NaT", "ns")] + [ts.asm8] * 3, dtype="M8[ns]"
-        )
+        expected = np.array([np.datetime64("NaT")] + [ts.asm8] * 3, dtype="M8[ns]")
         tm.assert_numpy_array_equal(result, expected)
 
     def test_infer_homogeoneous_datetimes_strings(self):
@@ -76,9 +71,7 @@ class TestArrayToDatetimeResolutionInference:
         arr = np.array([None, item, item, item], dtype=object)
         result, tz = tslib.array_to_datetime(arr, creso=creso_infer)
         assert tz is None
-        expected = np.array(
-            [np.datetime64("NaT", "ns"), item, item, item], dtype="M8[us]"
-        )
+        expected = np.array([np.datetime64("NaT"), item, item, item], dtype="M8[us]")
         tm.assert_numpy_array_equal(result, expected)
 
     def test_infer_heterogeneous(self):
@@ -105,7 +98,7 @@ class TestArrayToDatetimeResolutionInference:
         arr = np.array([dt, item], dtype=object)
         result, tz = tslib.array_to_datetime(arr, creso=creso_infer)
         assert tz is None
-        expected = np.array([dt, np.datetime64("NaT", "ns")], dtype="M8[us]")
+        expected = np.array([dt, np.datetime64("NaT")], dtype="M8[us]")
         tm.assert_numpy_array_equal(result, expected)
 
         result2, tz2 = tslib.array_to_datetime(arr[::-1], creso=creso_infer)
@@ -118,7 +111,7 @@ class TestArrayToDatetimeWithTZResolutionInference:
         tz = tzoffset("custom", 3600)
         vals = np.array(["2016-01-01 02:03:04.567", NaT], dtype=object)
         res = tslib.array_to_datetime_with_tz(vals, tz, False, False, creso_infer)
-        assert res.dtype == "M8[us]"
+        assert res.dtype == "M8[ms]"
 
         vals2 = np.array([datetime(2016, 1, 1, 2, 3, 4), NaT], dtype=object)
         res2 = tslib.array_to_datetime_with_tz(vals2, tz, False, False, creso_infer)
@@ -162,7 +155,7 @@ def test_parsing_valid_dates(data, expected):
     arr = np.array(data, dtype=object)
     result, _ = tslib.array_to_datetime(arr)
 
-    expected = np.array(expected, dtype="M8[us]")
+    expected = np.array(expected, dtype="M8[s]")
     tm.assert_numpy_array_equal(result, expected)
 
 
@@ -200,7 +193,7 @@ def test_parsing_non_iso_timezone_offset():
     expected = np.array([np.datetime64("2013-01-01 00:00:00.000000000")])
 
     tm.assert_numpy_array_equal(result, expected)
-    assert result_tz is UTC
+    assert result_tz is timezone.utc
 
 
 def test_parsing_different_timezone_offsets():
@@ -218,8 +211,8 @@ def test_parsing_different_timezone_offsets():
     [
         (date(1000, 1, 1), "s"),
         (datetime(1000, 1, 1), "us"),
-        ("1000-01-01", "us"),
-        ("Jan 1, 1000", "us"),
+        ("1000-01-01", "s"),
+        ("Jan 1, 1000", "s"),
         (np.datetime64("1000-01-01"), "s"),
     ],
 )
@@ -230,7 +223,7 @@ def test_coerce_outside_ns_bounds(invalid_date, exp_unit, errors):
     result, _ = tslib.array_to_datetime(arr, errors=errors)
     out_reso = np.datetime_data(result.dtype)[0]
     assert out_reso == exp_unit
-    ts = pd.Timestamp(invalid_date)
+    ts = Timestamp(invalid_date)
     assert ts.unit == exp_unit
 
     expected = np.array([ts._value], dtype=f"M8[{exp_unit}]")
@@ -242,7 +235,7 @@ def test_coerce_outside_ns_bounds_one_valid():
     result, _ = tslib.array_to_datetime(arr, errors="coerce")
 
     expected = ["1000-01-01T00:00:00.000000000", "2000-01-01T00:00:00.000000000"]
-    expected = np.array(expected, dtype="M8[us]")
+    expected = np.array(expected, dtype="M8[s]")
 
     tm.assert_numpy_array_equal(result, expected)
 
@@ -252,13 +245,13 @@ def test_coerce_of_invalid_datetimes():
     # With coercing, the invalid dates becomes iNaT
     result, _ = tslib.array_to_datetime(arr, errors="coerce")
     expected = ["2013-01-01T00:00:00.000000000", iNaT, iNaT]
-    tm.assert_numpy_array_equal(result, np.array(expected, dtype="M8[us]"))
+    tm.assert_numpy_array_equal(result, np.array(expected, dtype="M8[s]"))
 
     # With coercing, the invalid dates becomes iNaT
     result, _ = tslib.array_to_datetime(arr, errors="coerce")
     expected = ["2013-01-01T00:00:00.000000000", iNaT, iNaT]
 
-    tm.assert_numpy_array_equal(result, np.array(expected, dtype="M8[us]"))
+    tm.assert_numpy_array_equal(result, np.array(expected, dtype="M8[s]"))
 
 
 def test_to_datetime_barely_out_of_bounds():
@@ -294,7 +287,7 @@ class SubDatetime(datetime):
     pass
 
 
-@pytest.mark.parametrize("klass", [SubDatetime, datetime, pd.Timestamp])
+@pytest.mark.parametrize("klass", [SubDatetime, datetime, Timestamp])
 def test_datetime_subclass(klass):
     # GH 25851
     # ensure that subclassed datetime works with

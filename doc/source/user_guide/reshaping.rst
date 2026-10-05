@@ -78,7 +78,7 @@ are homogeneously-typed.
 .. note::
 
    :func:`~pandas.pivot` can only handle unique rows specified by ``index`` and ``columns``.
-   If your data contains duplicates, use :func:`~pandas.pivot_table`.
+   If you data contains duplicates, use :func:`~pandas.pivot_table`.
 
 
 .. _reshaping.pivot:
@@ -236,12 +236,9 @@ the level numbers:
 
 .. image:: ../_static/reshaping_unstack_0.png
 
-Notice that the :meth:`~DataFrame.unstack` method implicitly sorts the index levels involved,
-while :meth:`~DataFrame.stack` preserves the order of the stacked column level. Because
-:meth:`~DataFrame.unstack` sorts, a call to :meth:`~DataFrame.stack` and then
-:meth:`~DataFrame.unstack`, or vice versa, will result in a **sorted** copy of the original
-:class:`DataFrame` or :class:`Series`. Here "sorted" is with respect to the order of the
-:attr:`MultiIndex.levels`, which for a typical :class:`MultiIndex` matches sorting by value:
+Notice that the :meth:`~DataFrame.stack` and :meth:`~DataFrame.unstack` methods implicitly sort the index
+levels involved. Hence a call to :meth:`~DataFrame.stack` and then :meth:`~DataFrame.unstack`, or vice versa,
+will result in a **sorted** copy of the original :class:`DataFrame` or :class:`Series`:
 
 .. ipython:: python
 
@@ -324,7 +321,7 @@ The missing value can be filled with a specific value with the ``fill_value`` ar
 .. image:: ../_static/reshaping_melt.png
 
 The top-level :func:`~pandas.melt` function and the corresponding :meth:`DataFrame.melt`
-are useful to reshape a :class:`DataFrame` into a format where one or more columns
+are useful to massage a :class:`DataFrame` into a format where one or more columns
 are *identifier variables*, while all other columns, considered *measured
 variables*, are "unpivoted" to the row axis, leaving just two non-identifier
 columns, "variable" and "value". The names of those columns can be customized
@@ -345,7 +342,7 @@ by supplying the ``var_name`` and ``value_name`` parameters.
    cheese.melt(id_vars=["first", "last"], var_name="quantity")
 
 When transforming a DataFrame using :func:`~pandas.melt`, the index will be ignored.
-The original index values can be kept by setting the ``ignore_index`` parameter to ``False`` (default is ``True``).
+The original index values can be kept by setting the ``ignore_index=False`` parameter to ``False`` (default is ``True``).
 ``ignore_index=False`` will however duplicate index values.
 
 .. ipython:: python
@@ -398,7 +395,7 @@ variables and the values representing the presence of those variables per row.
    pd.get_dummies(df["key"])
    df["key"].str.get_dummies()
 
-``prefix`` adds a prefix to the column names which is useful for merging the result
+``prefix`` adds a prefix to the the column names which is useful for merging the result
 with the original :class:`DataFrame`:
 
 .. ipython:: python
@@ -418,16 +415,6 @@ This function is often used along with discretization functions like :func:`~pan
    bins = [0, 0.2, 0.4, 0.6, 0.8, 1]
 
    pd.get_dummies(pd.cut(values, bins))
-
-A categorical input gets one column per category, including categories absent
-from the data. To get a consistent set of columns, e.g. between training and
-test data, set the categories first:
-
-.. ipython:: python
-
-    s = pd.Series(list("aca")).astype(pd.CategoricalDtype(["a", "b", "c"]))
-
-    pd.get_dummies(s)
 
 
 :func:`get_dummies` also accepts a :class:`DataFrame`. By default, ``object``, ``string``,
@@ -490,6 +477,8 @@ The values can be cast to a different type using the ``dtype`` argument.
     df = pd.DataFrame({"A": list("abc"), "B": [1.1, 2.2, 3.3]})
 
     pd.get_dummies(df, dtype=np.float32).dtypes
+
+.. versionadded:: 1.5.0
 
 :func:`~pandas.from_dummies` converts the output of :func:`~pandas.get_dummies` back into
 a :class:`Series` of categorical values from indicator values.

@@ -8,7 +8,7 @@ from io import StringIO
 import numpy as np
 import pytest
 
-import pandas as pd
+from pandas import DataFrame
 import pandas._testing as tm
 
 
@@ -19,7 +19,7 @@ def test_comment(all_parsers, na_values):
 1,2.,4.#hello world
 5.,NaN,10.0
 """
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [[1.0, 2.0, 4.0], [5.0, np.nan, 10.0]], columns=["A", "B", "C"]
     )
     if parser.engine == "pyarrow":
@@ -63,7 +63,7 @@ A,B,C
         return
 
     result = parser.read_csv(StringIO(data), **read_kwargs)
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [[1.0, 2.0, 4.0], [5.0, np.nan, 10.0]], columns=["A", "B", "C"]
     )
     tm.assert_frame_equal(result, expected)
@@ -80,7 +80,7 @@ A,B,C
 5.,NaN,10.0
 """
     # This should ignore the first four lines (including comments).
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [[1.0, 2.0, 4.0], [5.0, np.nan, 10.0]], columns=["A", "B", "C"]
     )
     if parser.engine == "pyarrow":
@@ -103,7 +103,7 @@ A,B,C
 5.,NaN,10.0
 """
     # Header should begin at the second non-comment line.
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [[1.0, 2.0, 4.0], [5.0, np.nan, 10.0]], columns=["A", "B", "C"]
     )
     if parser.engine == "pyarrow":
@@ -129,7 +129,7 @@ A,B,C
     # Skiprows should skip the first 4 lines (including comments),
     # while header should start from the second non-commented line,
     # starting with line 5.
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [[1.0, 2.0, 4.0], [5.0, np.nan, 10.0]], columns=["A", "B", "C"]
     )
     if parser.engine == "pyarrow":
@@ -158,7 +158,7 @@ def test_custom_comment_char(all_parsers, comment_char):
         StringIO(data.replace("#", comment_char)), comment=comment_char
     )
 
-    expected = pd.DataFrame([[1, 2, 3], [4, 5, 6]], columns=["a", "b", "c"])
+    expected = DataFrame([[1, 2, 3], [4, 5, 6]], columns=["a", "b", "c"])
     tm.assert_frame_equal(result, expected)
 
 
@@ -169,9 +169,9 @@ def test_comment_first_line(all_parsers, header):
     data = "# notes\na,b,c\n# more notes\n1,2,3"
 
     if header is None:
-        expected = pd.DataFrame({0: ["a", "1"], 1: ["b", "2"], 2: ["c", "3"]})
+        expected = DataFrame({0: ["a", "1"], 1: ["b", "2"], 2: ["c", "3"]})
     else:
-        expected = pd.DataFrame([[1, 2, 3]], columns=["a", "b", "c"])
+        expected = DataFrame([[1, 2, 3]], columns=["a", "b", "c"])
 
     if parser.engine == "pyarrow":
         msg = "The 'comment' option is not supported with the 'pyarrow' engine"
@@ -203,7 +203,7 @@ def test_comment_char_in_default_value(all_parsers, request):
             parser.read_csv(StringIO(data), comment="#", na_values="#N/A")
         return
     result = parser.read_csv(StringIO(data), comment="#", na_values="#N/A")
-    expected = pd.DataFrame(
+    expected = DataFrame(
         {
             "col1": [1, 4, 7],
             "col2": [2, 5, 8],

@@ -7,9 +7,6 @@ Input/output
 ============
 .. currentmodule:: pandas
 
-.. note::
-   For an overview, see :ref:`io`.
-
 Pickling
 ~~~~~~~~
 .. autosummary::
@@ -27,18 +24,6 @@ Flat file
    read_csv
    DataFrame.to_csv
    read_fwf
-
-.. currentmodule:: pandas.io.parsers
-
-.. autosummary::
-   :toctree: api/
-
-   TextFileReader
-   TextFileReader.read
-   TextFileReader.get_chunk
-   TextFileReader.close
-
-.. currentmodule:: pandas
 
 Clipboard
 ~~~~~~~~~
@@ -92,13 +77,6 @@ JSON
 
    build_table_schema
 
-.. currentmodule:: pandas.api.typing
-
-.. autosummary::
-   :toctree: api/
-
-   JsonReader
-
 .. currentmodule:: pandas
 
 HTML
@@ -150,21 +128,11 @@ HDFStore: PyTables (HDF5)
    read_hdf
    HDFStore.put
    HDFStore.append
-   HDFStore.append_to_multiple
    HDFStore.get
    HDFStore.select
-   HDFStore.select_as_coordinates
-   HDFStore.select_as_multiple
-   HDFStore.select_column
-   HDFStore.remove
-   HDFStore.create_table_index
-   HDFStore.copy
-   HDFStore.flush
    HDFStore.info
-   HDFStore.is_open
    HDFStore.keys
    HDFStore.groups
-   HDFStore.get_storer
    HDFStore.walk
 
 .. warning::
@@ -187,16 +155,6 @@ Parquet
 
    read_parquet
    DataFrame.to_parquet
-
-Iceberg
-~~~~~~~
-.. autosummary::
-    :toctree: api/
-
-    read_iceberg
-    DataFrame.to_iceberg
-
-.. warning:: ``read_iceberg`` is experimental and may change without warning.
 
 ORC
 ~~~

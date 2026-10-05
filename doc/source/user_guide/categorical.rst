@@ -27,10 +27,10 @@ the ``categories`` array.
 The categorical data type is useful in the following cases:
 
 * A string variable consisting of only a few different values. Converting such a string
-  variable to a categorical variable will save some memory, see section :ref:`categorical.memory`.
+  variable to a categorical variable will save some memory, see :ref:`here <categorical.memory>`.
 * The lexical order of a variable is not the same as the logical order ("one", "two", "three").
   By converting to a categorical and specifying an order on the categories, sorting and
-  min/max will use the logical order instead of the lexical order, see section :ref:`categorical.sort`.
+  min/max will use the logical order instead of the lexical order, see :ref:`here <categorical.sort>`.
 * As a signal to other Python libraries that this column should be treated as a categorical
   variable (e.g. to use suitable statistical methods or plot types).
 
@@ -77,7 +77,7 @@ By passing a :class:`pandas.Categorical` object to a ``Series`` or assigning it 
 .. ipython:: python
 
     raw_cat = pd.Categorical(
-        [None, "b", "c", None], categories=["b", "c", "d"], ordered=False
+        ["a", "b", "c", "a"], categories=["b", "c", "d"], ordered=False
     )
     s = pd.Series(raw_cat)
     s
@@ -145,7 +145,7 @@ of :class:`~pandas.api.types.CategoricalDtype`.
 
     from pandas.api.types import CategoricalDtype
 
-    s = pd.Series([None, "b", "c", None])
+    s = pd.Series(["a", "b", "c", "a"])
     cat_type = CategoricalDtype(categories=["b", "c", "d"], ordered=True)
     s_cat = s.astype(cat_type)
     s_cat
@@ -349,7 +349,7 @@ Renaming categories is done by using the
     s = s.cat.rename_categories(new_categories)
     s
     # You can also pass a dict-like object to map the renaming
-    s = s.cat.rename_categories({"Group a": "x", "Group b": "y", "Group c": "z"})
+    s = s.cat.rename_categories({1: "x", 2: "y", 3: "z"})
     s
 
 .. note::
@@ -373,16 +373,6 @@ Categories must also not be ``NaN`` or a ``ValueError`` is raised:
         s = s.cat.rename_categories([1, 2, np.nan])
     except ValueError as e:
         print("ValueError:", str(e))
-
-To merge several categories into one, use :meth:`Series.replace` to replace the
-values and then drop the categories that are no longer used with
-:meth:`~Series.cat.remove_unused_categories`:
-
-.. ipython:: python
-
-    s = pd.Series(["a", "b", "c", "a"], dtype="category")
-    s = s.replace({"a": "b"}).cat.remove_unused_categories()
-    s
 
 Appending new categories
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -439,10 +429,10 @@ use :meth:`~pandas.Categorical.set_categories`.
     intentionally or because it is misspelled or (under Python3) due to a type difference (e.g.,
     NumPy S1 dtype and Python strings). This can result in surprising behaviour!
 
-.. _categorical.sort:
-
 Sorting and order
 -----------------
+
+.. _categorical.sort:
 
 If categorical data is ordered (``s.cat.ordered == True``), then the order of the categories has a
 meaning and certain operations are possible. If the categorical is unordered, ``.min()/.max()`` will raise a ``TypeError``.
@@ -712,7 +702,7 @@ of length "1".
     df.at["h", "cats"]  # returns a string
 
 .. note::
-    This is in contrast to R's ``factor`` function, where ``factor(c(1,2,3))[1]``
+    The is in contrast to R's ``factor`` function, where ``factor(c(1,2,3))[1]``
     returns a single value ``factor``.
 
 To get a single value ``Series`` of type ``category``, you pass in a list with
@@ -808,14 +798,6 @@ Assigning a ``Categorical`` to parts of a column of other types will use the val
     df
     df.dtypes
 
-.. note::
-
-    The examples above use ``.loc`` / ``.iloc`` to set values *within* an
-    existing categorical column, which preserves the ``category`` dtype.
-    Assigning to a full column with ``df["cats"] = value`` instead **replaces**
-    the column, so the dtype is inferred from ``value`` rather than kept. See
-    :ref:`indexing.column_assignment_vs_in_place` for details.
-
 .. _categorical.merge:
 .. _categorical.concat:
 
@@ -825,8 +807,8 @@ Merging / concatenation
 By default, combining ``Series`` or ``DataFrames`` which contain the same
 categories results in ``category`` dtype, otherwise results will depend on the
 dtype of the underlying categories. Merges that result in non-categorical
-dtypes will likely have higher memory usage. Use ``union_categories=True``,
-``.astype`` or ``union_categoricals`` to ensure ``category`` results.
+dtypes will likely have higher memory usage. Use ``.astype`` or
+``union_categoricals`` to ensure ``category`` results.
 
 .. ipython:: python
 
@@ -846,8 +828,6 @@ dtypes will likely have higher memory usage. Use ``union_categories=True``,
    float_cats = pd.Series([3.0, 4.0], dtype="category")
    pd.concat([int_cats, float_cats])
 
-   pd.concat([s1, s3], union_categories=True)
-   pd.concat([int_cats, float_cats], union_categories=True)
    pd.concat([s1, s3]).astype("category")
    union_categoricals([s1.array, s3.array])
 
@@ -909,7 +889,7 @@ The below raises ``TypeError`` because the categories are ordered and not identi
    union_categoricals([a, b])
 
 Ordered categoricals with different categories or orderings can be combined by
-using the ``ignore_order=True`` argument.
+using the ``ignore_ordered=True`` argument.
 
 .. ipython:: python
 
@@ -995,7 +975,8 @@ Missing data
 ------------
 
 pandas primarily uses the value ``np.nan`` to represent missing data. It is by
-default not included in computations. See :ref:`missing_data`.
+default not included in computations. See the :ref:`Missing Data section
+<missing_data>`.
 
 Missing values should **not** be included in the Categorical's ``categories``,
 only in the ``values``.
@@ -1021,8 +1002,6 @@ Methods for working with missing data, e.g. :meth:`~Series.isna`, :meth:`~Series
     pd.isna(s)
     s.fillna("a")
 
-.. _categorical.rfactor:
-
 Differences to R's ``factor``
 -----------------------------
 
@@ -1042,23 +1021,25 @@ The following differences to R's factor functions can be observed:
 Gotchas
 -------
 
-.. _categorical.memory:
+.. _categorical.rfactor:
 
 Memory usage
 ~~~~~~~~~~~~
 
-The memory usage of a ``Categorical`` is proportional to the number *and size* of categories plus the length of the data. In contrast,
-an ``object`` dtype is proportional to the size of the objects times the length of the data.
+.. _categorical.memory:
+
+The memory usage of a ``Categorical`` is proportional to the number of categories plus the length of the data. In contrast,
+an ``object`` dtype is a constant times the length of the data.
 
 .. ipython:: python
 
-   s = pd.Series(["foo", "bar"] * 1000, dtype="object")
+   s = pd.Series(["foo", "bar"] * 1000)
 
    # object dtype
-   s.memory_usage(deep=True)
+   s.nbytes
 
    # category dtype
-   s.astype("category").memory_usage(deep=True)
+   s.astype("category").nbytes
 
 .. note::
 
@@ -1067,13 +1048,13 @@ an ``object`` dtype is proportional to the size of the objects times the length 
 
    .. ipython:: python
 
-      s = pd.Series(["foo%04d" % i for i in range(2000)], dtype="object")
+      s = pd.Series(["foo%04d" % i for i in range(2000)])
 
       # object dtype
-      s.memory_usage(deep=True)
+      s.nbytes
 
       # category dtype
-      s.astype("category").memory_usage(deep=True)
+      s.astype("category").nbytes
 
 
 ``Categorical`` is not a ``numpy`` array
@@ -1166,3 +1147,34 @@ Setting the index will create a ``CategoricalIndex``:
     df.index
     # This now sorts by the categories order
     df.sort_index()
+
+Side effects
+~~~~~~~~~~~~
+
+Constructing a ``Series`` from a ``Categorical`` will not copy the input
+``Categorical``. This means that changes to the ``Series`` will in most cases
+change the original ``Categorical``:
+
+.. ipython:: python
+
+    cat = pd.Categorical([1, 2, 3, 10], categories=[1, 2, 3, 4, 10])
+    s = pd.Series(cat, name="cat")
+    cat
+    s.iloc[0:2] = 10
+    cat
+
+Use ``copy=True`` to prevent such a behaviour or simply don't reuse ``Categoricals``:
+
+.. ipython:: python
+
+    cat = pd.Categorical([1, 2, 3, 10], categories=[1, 2, 3, 4, 10])
+    s = pd.Series(cat, name="cat", copy=True)
+    cat
+    s.iloc[0:2] = 10
+    cat
+
+.. note::
+
+    This also happens in some cases when you supply a NumPy array instead of a ``Categorical``:
+    using an int array (e.g. ``np.array([1,2,3,4])``) will exhibit the same behavior, while using
+    a string array (e.g. ``np.array(["a","b","c","a"])``) will not.

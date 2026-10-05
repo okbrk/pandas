@@ -20,17 +20,14 @@ if TYPE_CHECKING:
     )
 
 
-def _side_expander(
-    prop_fmt: str,
-) -> Callable[[CSSResolver, str, str], Generator[tuple[str, str]]]:
+def _side_expander(prop_fmt: str) -> Callable:
     """
     Wrapper to expand shorthand property into top, right, bottom, left properties
 
     Parameters
     ----------
-    prop_fmt : str
-        Format string for the expanded property, with a placeholder for the
-        side, e.g. ``"margin-{:s}"``.
+    side : str
+        The border side to expand into properties
 
     Returns
     -------
@@ -60,15 +57,13 @@ def _side_expander(
                 stacklevel=find_stack_level(),
             )
             return
-        for key, idx in zip(self.SIDES, mapping, strict=True):
+        for key, idx in zip(self.SIDES, mapping):
             yield prop_fmt.format(key), tokens[idx]
 
     return expand
 
 
-def _border_expander(
-    side: str = "",
-) -> Callable[[CSSResolver, str, str], Generator[tuple[str, str]]]:
+def _border_expander(side: str = "") -> Callable:
     """
     Wrapper to expand 'border' property into border color, style, and width properties
 
@@ -126,36 +121,6 @@ def _border_expander(
         yield from self.atomize(border_declarations.items())
 
     return expand
-
-
-def _lowercase_css_values(value: str) -> str:
-    """
-    Preserves the case for all characters within single or double-quoted strings,
-    but lowercases everything else.
-
-    Intended to lowercase CSS properties and preserve string literals
-    (e.g. in Excel number formats).
-    Parameters
-    ----------
-    value: str
-        The CSS value string to process.
-
-    Returns
-    -------
-    str
-        The processed lowercase value with preserved case for quoted strings.
-
-    """
-    split = re.split(r'(".*?"|\'.*?\')', value)  # split by double and single quotes
-    res = []
-    for s in split:
-        if (s.startswith("'") and s.endswith("'")) or (
-            s.startswith('"') and s.endswith('"')
-        ):
-            res.append(s)
-        else:
-            res.append(s.lower())
-    return "".join(res)
 
 
 class CSSResolver:
@@ -261,13 +226,13 @@ class CSSResolver:
 
         Parameters
         ----------
-        declarations : str | Iterable[tuple[str, str]]
+        declarations_str : str | Iterable[tuple[str, str]]
             A CSS string or set of CSS declaration tuples
             e.g. "font-weight: bold; background: blue" or
             {("font-weight", "bold"), ("background", "blue")}
         inherited : dict, optional
             Atomic properties indicating the inherited style context in which
-            declarations is to be resolved. ``inherited`` should already
+            declarations_str is to be resolved. ``inherited`` should already
             be resolved, i.e. valid output of this method.
 
         Returns
@@ -377,10 +342,7 @@ class CSSResolver:
         return props
 
     def size_to_pt(
-        self,
-        in_val: str,
-        em_pt: float | None = None,
-        conversions: dict[str, tuple[str, float]] = UNIT_RATIOS,
+        self, in_val: str, em_pt: float | None = None, conversions: dict = UNIT_RATIOS
     ) -> str:
         def _error() -> str:
             warnings.warn(
@@ -426,12 +388,10 @@ class CSSResolver:
             size_fmt = f"{val:f}pt"
         return size_fmt
 
-    def atomize(
-        self, declarations: Iterable[tuple[str, str]]
-    ) -> Generator[tuple[str, str]]:
+    def atomize(self, declarations: Iterable) -> Generator[tuple[str, str]]:
         for prop, value in declarations:
             prop = prop.lower()
-            value = _lowercase_css_values(value)
+            value = value.lower()
             if prop in self.CSS_EXPANSIONS:
                 expand = self.CSS_EXPANSIONS[prop]
                 yield from expand(self, prop, value)
@@ -453,7 +413,8 @@ class CSSResolver:
                 continue
             prop, sep, val = decl.partition(":")
             prop = prop.strip().lower()
-            val = _lowercase_css_values(val.strip())
+            # TODO: don't lowercase case sensitive parts of values (strings)
+            val = val.strip().lower()
             if sep:
                 yield prop, val
             else:

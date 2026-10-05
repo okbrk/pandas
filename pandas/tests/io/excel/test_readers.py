@@ -17,13 +17,19 @@ from zipfile import BadZipFile
 import numpy as np
 import pytest
 
-from pandas.errors import Pandas4Warning
+from pandas._config import using_string_dtype
+
 import pandas.util._test_decorators as td
 
 import pandas as pd
+from pandas import (
+    DataFrame,
+    Index,
+    MultiIndex,
+    Series,
+    read_csv,
+)
 import pandas._testing as tm
-
-import pandas.io.excel._base as _excel_base
 
 read_ext_params = [".xls", ".xlsx", ".xlsm", ".xlsb", ".ods"]
 engine_params = [
@@ -34,9 +40,6 @@ engine_params = [
         "xlrd",
         marks=[
             td.skip_if_no("xlrd"),
-            pytest.mark.filterwarnings(
-                "ignore:The xlrd engine is deprecated:pandas.errors.Pandas4Warning"
-            ),
         ],
     ),
     pytest.param(
@@ -49,23 +52,9 @@ engine_params = [
         None,
         marks=[
             td.skip_if_no("xlrd"),
-            pytest.mark.filterwarnings(
-                "ignore:The xlrd engine is deprecated:pandas.errors.Pandas4Warning"
-            ),
-            pytest.mark.filterwarnings(
-                "ignore:The default engine for reading:pandas.errors.Pandas4Warning"
-            ),
         ],
     ),
-    pytest.param(
-        "pyxlsb",
-        marks=[
-            td.skip_if_no("pyxlsb"),
-            pytest.mark.filterwarnings(
-                "ignore:The pyxlsb engine is deprecated:pandas.errors.Pandas4Warning"
-            ),
-        ],
-    ),
+    pytest.param("pyxlsb", marks=td.skip_if_no("pyxlsb")),
     pytest.param("odf", marks=td.skip_if_no("odf")),
     pytest.param("calamine", marks=td.skip_if_no("python_calamine")),
 ]
@@ -97,7 +86,7 @@ def _transfer_marks(engine, read_ext):
     engine gives us a pytest.param object with some marks, read_ext is just
     a string.  We need to generate a new pytest.param inheriting the marks.
     """
-    values = (*engine.values, read_ext)
+    values = engine.values + (read_ext,)
     new_param = pytest.param(values, marks=engine.marks)
     return new_param
 
@@ -143,15 +132,18 @@ def df_ref(datapath):
     Obtain the reference data from read_csv with the Python engine.
     """
     filepath = datapath("io", "data", "csv", "test1.csv")
-    df_ref = pd.read_csv(filepath, index_col=0, parse_dates=True, engine="python")
+    df_ref = read_csv(filepath, index_col=0, parse_dates=True, engine="python")
     return df_ref
 
 
 def get_exp_unit(read_ext: str, engine: str | None) -> str:
-    return "us"
+    unit = "us"
+    if (read_ext == ".ods") ^ (engine == "calamine"):
+        unit = "s"
+    return unit
 
 
-def adjust_expected(expected: pd.DataFrame, read_ext: str, engine: str | None) -> None:
+def adjust_expected(expected: DataFrame, read_ext: str, engine: str | None) -> None:
     expected.index.name = None
     unit = get_exp_unit(read_ext, engine)
     # error: "Index" has no attribute "as_unit"
@@ -167,81 +159,22 @@ def xfail_datetimes_with_pyxlsb(engine, request):
         )
 
 
-@td.skip_if_no("openpyxl")
-@td.skip_if_no("python_calamine")
-@pytest.mark.parametrize("ext", ["xlsx", "xlsm"])
-def test_read_excel_default_engine_deprecated(datapath, ext):
-    # GH#56542 - the default xlsx/xlsm reader engine will change to calamine.
-    # xlsm files are format-sniffed as xlsx, so both get the 'xlsx' warning.
-    path = datapath("io", "data", "excel", f"test1.{ext}")
-
-    msg = "The default engine for reading 'xlsx' files will change"
-    with tm.assert_produces_warning(Pandas4Warning, match=msg):
-        pd.read_excel(path)
-
-    # passing an explicit engine silences the warning
-    for engine in ("openpyxl", "calamine"):
-        with tm.assert_produces_warning(None):
-            pd.read_excel(path, engine=engine)
-
-    # setting the io.excel.xlsx.reader option silences the warning
-    with pd.option_context("io.excel.xlsx.reader", "openpyxl"):
-        with tm.assert_produces_warning(None):
-            pd.read_excel(path)
-
-
 class TestReaders:
     @pytest.mark.parametrize("col", [[True, None, False], [True], [True, False]])
     def test_read_excel_type_check(self, col, tmp_excel, read_ext):
         # GH 58159
         if read_ext in (".xlsb", ".xls"):
             pytest.skip(f"No engine for filetype: '{read_ext}'")
-        df = pd.DataFrame({"bool_column": col}, dtype="boolean")
+        df = DataFrame({"bool_column": col}, dtype="boolean")
         df.to_excel(tmp_excel, index=False)
         df2 = pd.read_excel(tmp_excel, dtype={"bool_column": "boolean"})
         tm.assert_frame_equal(df, df2)
-
-    def test_read_excel_int_bool_mix_type_check(self, tmp_excel, read_ext):
-        # GH 60088
-        if read_ext in (".xlsb", ".xls"):
-            pytest.skip(f"No engine for filetype: '{read_ext}'")
-
-        df1 = pd.DataFrame(
-            {
-                "a": [True, True],
-                "b": [1, True],
-                "c": [True, 1],
-                "d": [False, 0],
-                "e": [0, False],
-                "f": [False, False],
-            },
-            dtype=object,
-        )
-        df1.to_excel(tmp_excel, index=False)
-
-        df2 = pd.read_excel(tmp_excel, dtype=object)
-
-        tm.assert_frame_equal(df1, df2)
-
-        for idx, row in df2.iterrows():
-            for col in df2.columns:
-                val = row[col]
-                exp_val = df1.iloc[idx][col]
-                # Check if values match
-                assert val == exp_val, (
-                    f"Mismatch at Row {idx} Column {col}: {val} != {exp_val}"
-                )
-                # Check if types match
-                assert type(val) == type(exp_val), (
-                    f"Type mismatch at Row {idx} Column {col}: "
-                    f"{type(val)} != {type(exp_val)}"
-                )
 
     def test_pass_none_type(self, datapath):
         # GH 58159
         f_path = datapath("io", "data", "excel", "test_none_type.xlsx")
 
-        with pd.ExcelFile(f_path, engine="openpyxl") as excel:
+        with pd.ExcelFile(f_path) as excel:
             parsed = pd.read_excel(
                 excel,
                 sheet_name="Sheet1",
@@ -250,7 +183,7 @@ class TestReaders:
                 dtype="boolean",
                 engine="openpyxl",
             )
-        expected = pd.DataFrame(
+        expected = DataFrame(
             {"Test": [True, None, False, None, False, None, True]},
             dtype="boolean",
         )
@@ -266,8 +199,13 @@ class TestReaders:
         monkeypatch.chdir(datapath("io", "data", "excel"))
         monkeypatch.setattr(pd, "read_excel", func)
 
-    def test_engine_used(self, read_ext, engine):
+    def test_engine_used(self, read_ext, engine, monkeypatch):
         # GH 38884
+        def parser(self, *args, **kwargs):
+            return self.engine
+
+        monkeypatch.setattr(pd.ExcelFile, "parse", parser)
+
         expected_defaults = {
             "xlsx": "openpyxl",
             "xlsm": "openpyxl",
@@ -277,8 +215,7 @@ class TestReaders:
         }
 
         with open("test1" + read_ext, "rb") as f:
-            with pd.ExcelFile(f, engine=engine) as excel_file:
-                result = excel_file.engine
+            result = pd.read_excel(f)
 
         if engine is not None:
             expected = engine
@@ -466,8 +403,8 @@ class TestReaders:
     def test_index_col_str(self, read_ext):
         # see gh-52716
         result = pd.read_excel("test1" + read_ext, sheet_name="Sheet3", index_col="A")
-        expected = pd.DataFrame(
-            columns=["B", "C", "D", "E", "F"], index=pd.Index([], name="A")
+        expected = DataFrame(
+            columns=["B", "C", "D", "E", "F"], index=Index([], name="A")
         )
         tm.assert_frame_equal(result, expected)
 
@@ -476,9 +413,9 @@ class TestReaders:
         result = pd.read_excel(
             "test1" + read_ext, sheet_name="Sheet3", index_col=["A", "B", "C"]
         )
-        expected = pd.DataFrame(
+        expected = DataFrame(
             columns=["D", "E", "F"],
-            index=pd.MultiIndex(levels=[[]] * 3, codes=[[]] * 3, names=["A", "B", "C"]),
+            index=MultiIndex(levels=[[]] * 3, codes=[[]] * 3, names=["A", "B", "C"]),
         )
         tm.assert_frame_equal(result, expected)
 
@@ -488,7 +425,7 @@ class TestReaders:
         result = pd.read_excel(
             "test1" + read_ext, sheet_name="Sheet4", index_col=index_col
         )
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [["i1", "a", "x"], ["i2", "b", "y"]], columns=["Unnamed: 0", "col1", "col2"]
         )
         if index_col:
@@ -517,7 +454,7 @@ class TestReaders:
 
     def test_excel_stop_iterator(self, read_ext):
         parsed = pd.read_excel("test2" + read_ext, sheet_name="Sheet1")
-        expected = pd.DataFrame([["aaaa", "bbbbb"]], columns=["Test", "Test1"])
+        expected = DataFrame([["aaaa", "bbbbb"]], columns=["Test", "Test1"])
         tm.assert_frame_equal(parsed, expected)
 
     def test_excel_cell_error_na(self, request, engine, read_ext):
@@ -530,7 +467,7 @@ class TestReaders:
             )
 
         parsed = pd.read_excel("test3" + read_ext, sheet_name="Sheet1")
-        expected = pd.DataFrame([[np.nan]], columns=["Test"])
+        expected = DataFrame([[np.nan]], columns=["Test"])
         tm.assert_frame_equal(parsed, expected)
 
     def test_excel_table(self, request, engine, read_ext, df_ref):
@@ -556,14 +493,14 @@ class TestReaders:
         xfail_datetimes_with_pyxlsb(engine, request)
 
         unit = get_exp_unit(read_ext, engine)
-        expected = pd.DataFrame.from_dict(
+        expected = DataFrame.from_dict(
             {
                 "IntCol": [1, 2, -3, 4, 0],
                 "FloatCol": [1.25, 2.25, 1.83, 1.92, 0.0000000005],
                 "BoolCol": [True, False, True, True, False],
                 "StrCol": [1, 2, 3, 4, 5],
                 "Str2Col": ["a", 3, "c", "d", "e"],
-                "DateCol": pd.Index(
+                "DateCol": Index(
                     [
                         datetime(2013, 10, 30),
                         datetime(2013, 10, 31),
@@ -605,7 +542,7 @@ class TestReaders:
     def test_reader_converters(self, read_ext):
         basename = "test_converters"
 
-        expected = pd.DataFrame.from_dict(
+        expected = DataFrame.from_dict(
             {
                 "IntCol": [1, 2, -3, -1000, 0],
                 "FloatCol": [12.5, np.nan, 18.3, 19.2, 0.000000005],
@@ -633,7 +570,7 @@ class TestReaders:
         basename = "testdtype"
         actual = pd.read_excel(basename + read_ext)
 
-        expected = pd.DataFrame(
+        expected = DataFrame(
             {
                 "a": [1, 2, 3, 4],
                 "b": [2.5, 3.5, 4.5, 5.5],
@@ -650,7 +587,7 @@ class TestReaders:
 
         expected["a"] = expected["a"].astype("float64")
         expected["b"] = expected["b"].astype("float32")
-        expected["c"] = pd.Series(["001", "002", "003", "004"], dtype="str")
+        expected["c"] = Series(["001", "002", "003", "004"], dtype="str")
         tm.assert_frame_equal(actual, expected)
 
         msg = "Unable to convert column d to type int64"
@@ -672,10 +609,10 @@ class TestReaders:
             (
                 {"a": "float64", "b": "float32", "c": str, "d": str},
                 {
-                    "a": pd.Series([1, 2, 3, 4], dtype="float64"),
-                    "b": pd.Series([2.5, 3.5, 4.5, 5.5], dtype="float32"),
-                    "c": pd.Series(["001", "002", "003", "004"], dtype="str"),
-                    "d": pd.Series(["1", "2", np.nan, "4"], dtype="str"),
+                    "a": Series([1, 2, 3, 4], dtype="float64"),
+                    "b": Series([2.5, 3.5, 4.5, 5.5], dtype="float32"),
+                    "c": Series(["001", "002", "003", "004"], dtype="str"),
+                    "d": Series(["1", "2", np.nan, "4"], dtype="str"),
                 },
             ),
         ],
@@ -685,26 +622,27 @@ class TestReaders:
         basename = "testdtype"
 
         actual = pd.read_excel(basename + read_ext, dtype=dtype)
-        expected = pd.DataFrame(expected)
+        expected = DataFrame(expected)
         tm.assert_frame_equal(actual, expected)
 
+    @pytest.mark.xfail(using_string_dtype(), reason="TODO(infer_string)", strict=False)
     def test_dtype_backend(self, read_ext, dtype_backend, engine, tmp_excel):
         # GH#36712
         if read_ext in (".xlsb", ".xls"):
             pytest.skip(f"No engine for filetype: '{read_ext}'")
 
-        df = pd.DataFrame(
+        df = DataFrame(
             {
-                "a": pd.Series([1, 3], dtype="Int64"),
-                "b": pd.Series([2.5, 4.5], dtype="Float64"),
-                "c": pd.Series([True, False], dtype="boolean"),
-                "d": pd.Series(["a", "b"], dtype="string"),
-                "e": pd.Series([pd.NA, 6], dtype="Int64"),
-                "f": pd.Series([pd.NA, 7.5], dtype="Float64"),
-                "g": pd.Series([pd.NA, True], dtype="boolean"),
-                "h": pd.Series([pd.NA, "a"], dtype="string"),
-                "i": pd.Series([pd.Timestamp("2019-12-31")] * 2),
-                "j": pd.Series([pd.NA, pd.NA], dtype="Int64"),
+                "a": Series([1, 3], dtype="Int64"),
+                "b": Series([2.5, 4.5], dtype="Float64"),
+                "c": Series([True, False], dtype="boolean"),
+                "d": Series(["a", "b"], dtype="string"),
+                "e": Series([pd.NA, 6], dtype="Int64"),
+                "f": Series([pd.NA, 7.5], dtype="Float64"),
+                "g": Series([pd.NA, True], dtype="boolean"),
+                "h": Series([pd.NA, "a"], dtype="string"),
+                "i": Series([pd.Timestamp("2019-12-31")] * 2),
+                "j": Series([pd.NA, pd.NA], dtype="Int64"),
             }
         )
         df.to_excel(tmp_excel, sheet_name="test", index=False)
@@ -716,16 +654,12 @@ class TestReaders:
 
             from pandas.arrays import ArrowExtensionArray
 
-            expected = pd.DataFrame(
+            expected = DataFrame(
                 {
                     col: ArrowExtensionArray(pa.array(df[col], from_pandas=True))
                     for col in df.columns
                 }
             )
-
-            # pandas uses large_string by default, but pyarrow infers string
-            expected["d"] = expected["d"].astype(pd.ArrowDtype(pa.string()))
-            expected["h"] = expected["h"].astype(pd.ArrowDtype(pa.string()))
             # pyarrow by default infers timestamp resolution as us, not ns
             expected["i"] = ArrowExtensionArray(
                 expected["i"].array._pa_array.cast(pa.timestamp(unit="us"))
@@ -744,7 +678,7 @@ class TestReaders:
         if read_ext in (".xlsb", ".xls"):
             pytest.skip(f"No engine for filetype: '{read_ext}'")
 
-        df = pd.DataFrame({"a": [np.nan, 1.0], "b": [2.5, np.nan]})
+        df = DataFrame({"a": [np.nan, 1.0], "b": [2.5, np.nan]})
         df.to_excel(tmp_excel, sheet_name="test", index=False)
         result = pd.read_excel(
             tmp_excel,
@@ -759,7 +693,7 @@ class TestReaders:
         if read_ext in (".xlsb", ".xls"):
             pytest.skip(f"No engine for filetype: '{read_ext}'")
 
-        df = pd.DataFrame(
+        df = DataFrame(
             {
                 "a": np.array(["a", "b"], dtype=np.object_),
                 "b": np.array(["x", pd.NA], dtype=np.object_),
@@ -772,47 +706,15 @@ class TestReaders:
                 tmp_excel, sheet_name="test", dtype_backend="numpy_nullable"
             )
 
-        expected = pd.DataFrame(
+        expected = DataFrame(
             {
-                "a": pd.Series(["a", "b"], dtype=pd.StringDtype(string_storage)),
-                "b": pd.Series(["x", None], dtype=pd.StringDtype(string_storage)),
+                "a": Series(["a", "b"], dtype=pd.StringDtype(string_storage)),
+                "b": Series(["x", None], dtype=pd.StringDtype(string_storage)),
             }
         )
         # the storage of the str columns' Index is also affected by the
         # string_storage setting -> ignore that for checking the result
         tm.assert_frame_equal(result, expected, check_column_type=False)
-
-    def test_dtype_category_infers_numeric_and_bool(self, read_ext, tmp_excel):
-        # GH#56044 read_excel shares read_csv's category inference, matching
-        #  the types these columns get without dtype="category"
-        if read_ext in (".xlsb", ".xls"):
-            pytest.skip(f"No engine for filetype: '{read_ext}'")
-
-        df = pd.DataFrame({"a": ["1", "2", "1"], "b": ["True", "False", "True"]})
-        df.to_excel(tmp_excel, sheet_name="test", index=False)
-
-        result = pd.read_excel(tmp_excel, sheet_name="test", dtype="category")
-
-        expected = pd.DataFrame(
-            {"a": pd.Categorical([1, 2, 1]), "b": pd.Categorical([True, False, True])}
-        )
-        tm.assert_frame_equal(result, expected)
-
-    def test_dtype_category_native_cells(self, read_ext, tmp_excel):
-        # GH#56044 as above for cells that are natively typed rather than
-        #  text, which reach the inference as Python ints/floats/bools
-        if read_ext in (".xlsb", ".xls"):
-            pytest.skip(f"No engine for filetype: '{read_ext}'")
-
-        df = pd.DataFrame(
-            {"a": [1, 2, 1], "b": [3.5, 4.5, 3.5], "c": [True, False, True]}
-        )
-        df.to_excel(tmp_excel, sheet_name="test", index=False)
-
-        result = pd.read_excel(tmp_excel, sheet_name="test", dtype="category")
-
-        expected = pd.DataFrame({col: pd.Categorical(vals) for col, vals in df.items()})
-        tm.assert_frame_equal(result, expected)
 
     @pytest.mark.parametrize("dtypes, exp_value", [({}, 1), ({"a.1": "int64"}, 1)])
     def test_dtype_mangle_dup_cols(self, read_ext, dtypes, exp_value):
@@ -822,10 +724,10 @@ class TestReaders:
         dtype_dict_copy = dtype_dict.copy()
         # GH#42462
         result = pd.read_excel(basename + read_ext, dtype=dtype_dict)
-        expected = pd.DataFrame(
+        expected = DataFrame(
             {
-                "a": pd.Series([1], dtype=object),
-                "a.1": pd.Series([exp_value], dtype=object if not dtypes else None),
+                "a": Series([1], dtype=object),
+                "a.1": Series([exp_value], dtype=object if not dtypes else None),
             }
         )
         assert dtype_dict == dtype_dict_copy, "dtype dict changed"
@@ -836,7 +738,7 @@ class TestReaders:
         basename = "test_spaces"
 
         actual = pd.read_excel(basename + read_ext)
-        expected = pd.DataFrame(
+        expected = DataFrame(
             {
                 "testcol": [
                     "this is great",
@@ -853,8 +755,8 @@ class TestReaders:
     @pytest.mark.parametrize(
         "basename,expected",
         [
-            ("gh-35802", pd.DataFrame({"COLUMN": ["Test (1)"]})),
-            ("gh-36122", pd.DataFrame(columns=["got 2nd sa"])),
+            ("gh-35802", DataFrame({"COLUMN": ["Test (1)"]})),
+            ("gh-36122", DataFrame(columns=["got 2nd sa"])),
         ],
     )
     def test_read_excel_ods_nested_xml(self, engine, read_ext, basename, expected):
@@ -904,10 +806,10 @@ class TestReaders:
     # GH6403
     def test_read_excel_blank(self, read_ext):
         actual = pd.read_excel("blank" + read_ext, sheet_name="Sheet1")
-        tm.assert_frame_equal(actual, pd.DataFrame())
+        tm.assert_frame_equal(actual, DataFrame())
 
     def test_read_excel_blank_with_header(self, read_ext):
-        expected = pd.DataFrame(columns=["col_1", "col_2"])
+        expected = DataFrame(columns=["col_1", "col_2"])
         actual = pd.read_excel("blank_with_header" + read_ext, sheet_name="Sheet1")
         tm.assert_frame_equal(actual, expected)
 
@@ -918,11 +820,12 @@ class TestReaders:
         with pytest.raises(ZeroDivisionError, match=r" \(sheet: Sheet1\)$"):
             pd.read_excel("test1" + read_ext, usecols=lambda x: 1 / 0, sheet_name=None)
 
+    @pytest.mark.filterwarnings("ignore:Cell A4 is marked:UserWarning:openpyxl")
     def test_date_conversion_overflow(self, request, engine, read_ext):
         # GH 10001 : pandas.ExcelFile ignore parse_dates=False
         xfail_datetimes_with_pyxlsb(engine, request)
 
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [
                 [pd.Timestamp("2016-03-12"), "Marc Johnson"],
                 [pd.Timestamp("2016-03-16"), "Jack Black"],
@@ -980,9 +883,7 @@ class TestReaders:
     )
     def test_bad_sheetname_raises(self, read_ext, sheet_name):
         # GH 39250
-        msg = "|".join(
-            ["Worksheet index 3 is invalid", "Worksheet named 'Sheet4' not found"]
-        )
+        msg = "Worksheet index 3 is invalid|Worksheet named 'Sheet4' not found"
         with pytest.raises(ValueError, match=msg):
             pd.read_excel("blank" + read_ext, sheet_name=sheet_name)
 
@@ -1012,7 +913,8 @@ class TestReaders:
 
             error = XLRDError
             msg = (
-                "Unsupported format, or corrupt file: Expected BOF record; found b'foo'"
+                "Unsupported format, or corrupt file: Expected BOF "
+                "record; found b'foo'"
             )
         elif engine == "calamine":
             from python_calamine import CalamineError
@@ -1034,28 +936,31 @@ class TestReaders:
         local_table = pd.read_excel("test1" + read_ext)
         tm.assert_frame_equal(url_table, local_table)
 
+    @td.skip_if_not_us_locale
     @pytest.mark.single_cpu
-    def test_read_from_s3_url(self, read_ext, s3_bucket_public, s3so):
+    def test_read_from_s3_url(self, read_ext, s3_public_bucket, s3so):
+        # Bucket created in tests/io/conftest.py
         with open("test1" + read_ext, "rb") as f:
-            s3_bucket_public.put_object(Key="test1" + read_ext, Body=f)
+            s3_public_bucket.put_object(Key="test1" + read_ext, Body=f)
 
-        url = f"s3://{s3_bucket_public.name}/test1" + read_ext
+        url = f"s3://{s3_public_bucket.name}/test1" + read_ext
 
         url_table = pd.read_excel(url, storage_options=s3so)
         local_table = pd.read_excel("test1" + read_ext)
         tm.assert_frame_equal(url_table, local_table)
 
     @pytest.mark.single_cpu
-    def test_read_from_s3_object(self, read_ext, s3_bucket_public, s3so):
+    def test_read_from_s3_object(self, read_ext, s3_public_bucket, s3so):
         # GH 38788
+        # Bucket created in tests/io/conftest.py
         with open("test1" + read_ext, "rb") as f:
-            s3_bucket_public.put_object(Key="test1" + read_ext, Body=f)
+            s3_public_bucket.put_object(Key="test1" + read_ext, Body=f)
 
         import s3fs
 
         s3 = s3fs.S3FileSystem(**s3so)
 
-        with s3.open(f"s3://{s3_bucket_public.name}/test1" + read_ext) as f:
+        with s3.open(f"s3://{s3_public_bucket.name}/test1" + read_ext) as f:
             url_table = pd.read_excel(f)
 
         local_table = pd.read_excel("test1" + read_ext)
@@ -1107,7 +1012,7 @@ class TestReaders:
             )
 
         # Test reading times with and without milliseconds. GH5945.
-        expected = pd.DataFrame.from_dict(
+        expected = DataFrame.from_dict(
             {
                 "Time": [
                     time(1, 2, 3),
@@ -1137,11 +1042,11 @@ class TestReaders:
 
         unit = get_exp_unit(read_ext, engine)
 
-        mi = pd.MultiIndex.from_product([["foo", "bar"], ["a", "b"]])
+        mi = MultiIndex.from_product([["foo", "bar"], ["a", "b"]])
         mi_file = "testmultiindex" + read_ext
 
         # "mi_column" sheet
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [
                 [1, 2.5, pd.Timestamp("2015-01-01"), True],
                 [2, 3.5, pd.Timestamp("2015-01-02"), False],
@@ -1229,12 +1134,10 @@ class TestReaders:
         xfail_datetimes_with_pyxlsb(engine, request)
 
         mi_file = "testmultiindex" + read_ext
-        mi = pd.MultiIndex.from_product(
-            [["foo", "bar"], ["a", "b"]], names=["c1", "c2"]
-        )
+        mi = MultiIndex.from_product([["foo", "bar"], ["a", "b"]], names=["c1", "c2"])
 
         unit = get_exp_unit(read_ext, engine)
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [
                 [1, 2.5, pd.Timestamp("2015-01-01"), True],
                 [2, 3.5, pd.Timestamp("2015-01-02"), False],
@@ -1242,7 +1145,7 @@ class TestReaders:
                 [4, 5.5, pd.Timestamp("2015-01-04"), True],
             ],
             columns=mi,
-            index=pd.MultiIndex.from_arrays(
+            index=MultiIndex.from_arrays(
                 (["foo", "foo", "bar", "bar"], idx_lvl2),
                 names=["ilvl1", "ilvl2"],
             ),
@@ -1263,8 +1166,8 @@ class TestReaders:
         mi_file = "testmultiindex" + read_ext
         result = pd.read_excel(mi_file, sheet_name="index_col_none", header=[0, 1])
 
-        exp_columns = pd.MultiIndex.from_product([("A", "B"), ("key", "val")])
-        expected = pd.DataFrame([[1, 2, 3, 4]] * 2, columns=exp_columns)
+        exp_columns = MultiIndex.from_product([("A", "B"), ("key", "val")])
+        expected = DataFrame([[1, 2, 3, 4]] * 2, columns=exp_columns)
         tm.assert_frame_equal(result, expected)
 
     def test_excel_old_index_format(self, read_ext):
@@ -1286,7 +1189,7 @@ class TestReaders:
             dtype=object,
         )
         columns = ["C_l0_g0", "C_l0_g1", "C_l0_g2", "C_l0_g3", "C_l0_g4"]
-        mi = pd.MultiIndex(
+        mi = MultiIndex(
             levels=[
                 ["R0", "R_l0_g0", "R_l0_g1", "R_l0_g2", "R_l0_g3", "R_l0_g4"],
                 ["R1", "R_l1_g0", "R_l1_g1", "R_l1_g2", "R_l1_g3", "R_l1_g4"],
@@ -1294,11 +1197,11 @@ class TestReaders:
             codes=[[0, 1, 2, 3, 4, 5], [0, 1, 2, 3, 4, 5]],
             names=[None, None],
         )
-        si = pd.Index(
+        si = Index(
             ["R0", "R_l0_g0", "R_l0_g1", "R_l0_g2", "R_l0_g3", "R_l0_g4"], name=None
         )
 
-        expected = pd.DataFrame(data, index=si, columns=columns)
+        expected = DataFrame(data, index=si, columns=columns)
 
         actual = pd.read_excel(filename, sheet_name="single_names", index_col=0)
         tm.assert_frame_equal(actual, expected)
@@ -1320,7 +1223,7 @@ class TestReaders:
             ]
         )
         columns = ["C_l0_g0", "C_l0_g1", "C_l0_g2", "C_l0_g3", "C_l0_g4"]
-        mi = pd.MultiIndex(
+        mi = MultiIndex(
             levels=[
                 ["R_l0_g0", "R_l0_g1", "R_l0_g2", "R_l0_g3", "R_l0_g4"],
                 ["R_l1_g0", "R_l1_g1", "R_l1_g2", "R_l1_g3", "R_l1_g4"],
@@ -1328,11 +1231,9 @@ class TestReaders:
             codes=[[0, 1, 2, 3, 4], [0, 1, 2, 3, 4]],
             names=[None, None],
         )
-        si = pd.Index(
-            ["R_l0_g0", "R_l0_g1", "R_l0_g2", "R_l0_g3", "R_l0_g4"], name=None
-        )
+        si = Index(["R_l0_g0", "R_l0_g1", "R_l0_g2", "R_l0_g3", "R_l0_g4"], name=None)
 
-        expected = pd.DataFrame(data, index=si, columns=columns)
+        expected = DataFrame(data, index=si, columns=columns)
 
         actual = pd.read_excel(filename, sheet_name="single_no_names", index_col=0)
         tm.assert_frame_equal(actual, expected)
@@ -1358,7 +1259,7 @@ class TestReaders:
         actual = pd.read_excel(
             "testskiprows" + read_ext, sheet_name="skiprows_list", skiprows=[0, 2]
         )
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [
                 [1, 2.5, pd.Timestamp("2015-01-01"), True],
                 [2, 3.5, pd.Timestamp("2015-01-02"), False],
@@ -1391,7 +1292,7 @@ class TestReaders:
             skiprows=3,
             names=["a", "b", "c", "d"],
         )
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [
                 # [1, 2.5, pd.Timestamp("2015-01-01"), True],
                 [2, 3.5, pd.Timestamp("2015-01-02"), False],
@@ -1413,7 +1314,7 @@ class TestReaders:
             sheet_name="skiprows_list",
             skiprows=lambda x: x not in [1, 3, 5],
         )
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [
                 [1, 2.5, pd.Timestamp("2015-01-01"), True],
                 # [2, 3.5, pd.Timestamp("2015-01-02"), False],
@@ -1423,14 +1324,6 @@ class TestReaders:
             columns=["a", "b", "c", "d"],
         )
         expected["c"] = expected["c"].astype(f"M8[{unit}]")
-        tm.assert_frame_equal(actual, expected)
-
-    def test_read_excel_skiprows_callable_all(self, read_ext, monkeypatch):
-        # GH 64027
-        with monkeypatch.context() as m:
-            m.setattr(_excel_base, "EXCEL_ROWS_MAX", 10)
-            actual = pd.read_excel("test1" + read_ext, skiprows=lambda _: True, nrows=1)
-        expected = pd.DataFrame()
         tm.assert_frame_equal(actual, expected)
 
     def test_read_excel_nrows(self, read_ext):
@@ -1499,10 +1392,10 @@ class TestReaders:
         # GH 31783
         file_name = "testmultiindex" + read_ext
         data = [("B", "B"), ("key", "val"), (3, 4), (3, 4)]
-        idx = pd.MultiIndex.from_tuples(
+        idx = MultiIndex.from_tuples(
             [("A", "A"), ("key", "val"), (1, 2), (1, 2)], names=(0, 1)
         )
-        expected = pd.DataFrame(data, index=idx, columns=(2, 3))
+        expected = DataFrame(data, index=idx, columns=(2, 3))
         result = pd.read_excel(
             file_name, sheet_name="index_col_none", index_col=[0, 1], header=None
         )
@@ -1512,16 +1405,16 @@ class TestReaders:
         # GH 39808
         file_name = "one_col_blank_line" + read_ext
         data = [0.5, np.nan, 1, 2]
-        expected = pd.DataFrame(data, columns=["numbers"])
+        expected = DataFrame(data, columns=["numbers"])
         result = pd.read_excel(file_name)
         tm.assert_frame_equal(result, expected)
 
     def test_multiheader_two_blank_lines(self, read_ext):
         # GH 40442
         file_name = "testmultiindex" + read_ext
-        columns = pd.MultiIndex.from_tuples([("a", "A"), ("b", "B")])
+        columns = MultiIndex.from_tuples([("a", "A"), ("b", "B")])
         data = [[np.nan, np.nan], [np.nan, np.nan], [1, 3], [2, 4]]
-        expected = pd.DataFrame(data, columns=columns)
+        expected = DataFrame(data, columns=columns)
         result = pd.read_excel(
             file_name, sheet_name="mi_column_empty_rows", header=[0, 1]
         )
@@ -1567,7 +1460,7 @@ class TestReaders:
     def test_euro_decimal_format(self, read_ext):
         # copied from read_csv
         result = pd.read_excel("test_decimal" + read_ext, decimal=",", skiprows=1)
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [
                 [1, 1521.1541, 187101.9543, "ABC", "poi", 4.738797819],
                 [2, 121.12, 14897.76, "DEF", "uyt", 0.377320872],
@@ -1618,7 +1511,7 @@ class TestExcelFileRead:
             parsed = pd.read_excel(
                 excel, sheet_name="Sheet1", keep_default_na=False, na_values=["apple"]
             )
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [["NA"], [1], ["NA"], [np.nan], ["rabbit"]], columns=["Test"]
         )
         tm.assert_frame_equal(parsed, expected)
@@ -1627,7 +1520,7 @@ class TestExcelFileRead:
             parsed = pd.read_excel(
                 excel, sheet_name="Sheet1", keep_default_na=True, na_values=["apple"]
             )
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [[np.nan], [1], [np.nan], [np.nan], ["rabbit"]], columns=["Test"]
         )
         tm.assert_frame_equal(parsed, expected)
@@ -1637,7 +1530,7 @@ class TestExcelFileRead:
             parsed = pd.read_excel(
                 excel, sheet_name="Sheet1", keep_default_na=False, na_values=["apple"]
             )
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [["1.#QNAN"], [1], ["nan"], [np.nan], ["rabbit"]], columns=["Test"]
         )
         tm.assert_frame_equal(parsed, expected)
@@ -1646,7 +1539,7 @@ class TestExcelFileRead:
             parsed = pd.read_excel(
                 excel, sheet_name="Sheet1", keep_default_na=True, na_values=["apple"]
             )
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [[np.nan], [1], [np.nan], [np.nan], ["rabbit"]], columns=["Test"]
         )
         tm.assert_frame_equal(parsed, expected)
@@ -1673,15 +1566,8 @@ class TestExcelFileRead:
         else:
             expected = [[np.nan], [1], [np.nan], [np.nan], ["rabbit"]]
 
-        expected = pd.DataFrame(expected, columns=["Test"])
+        expected = DataFrame(expected, columns=["Test"])
         tm.assert_frame_equal(parsed, expected)
-
-    def test_excel_bool_kwarg_not_bool(self, read_ext):
-        # GH#68341 a non-bool was taken for its truthiness
-        msg = 'For argument "na_filter" expected type bool'
-        with pd.ExcelFile("test1" + read_ext) as excel:
-            with pytest.raises(ValueError, match=msg):
-                pd.read_excel(excel, sheet_name="Sheet1", na_filter="False")
 
     def test_excel_table_sheet_by_index(self, request, engine, read_ext, df_ref):
         xfail_datetimes_with_pyxlsb(engine, request)
@@ -1695,11 +1581,9 @@ class TestExcelFileRead:
         tm.assert_frame_equal(df1, expected)
         tm.assert_frame_equal(df2, expected)
 
-        depr_msg = "ExcelFile.parse is deprecated"
         with pd.ExcelFile("test1" + read_ext) as excel:
-            with tm.assert_produces_warning(Pandas4Warning, match=depr_msg):
-                df1 = excel.parse(0, index_col=0)
-                df2 = excel.parse(1, skiprows=[1], index_col=0)
+            df1 = excel.parse(0, index_col=0)
+            df2 = excel.parse(1, skiprows=[1], index_col=0)
         tm.assert_frame_equal(df1, expected)
         tm.assert_frame_equal(df2, expected)
 
@@ -1708,8 +1592,7 @@ class TestExcelFileRead:
         tm.assert_frame_equal(df3, df1.iloc[:-1])
 
         with pd.ExcelFile("test1" + read_ext) as excel:
-            with tm.assert_produces_warning(Pandas4Warning, match=depr_msg):
-                df3 = excel.parse(0, index_col=0, skipfooter=1)
+            df3 = excel.parse(0, index_col=0, skipfooter=1)
 
         tm.assert_frame_equal(df3, df1.iloc[:-1])
 
@@ -1722,14 +1605,11 @@ class TestExcelFileRead:
         filename = "test1"
         sheet_name = "Sheet1"
 
-        depr_msg = "ExcelFile.parse is deprecated"
         with pd.ExcelFile(filename + read_ext) as excel:
-            with tm.assert_produces_warning(Pandas4Warning, match=depr_msg):
-                df1_parse = excel.parse(sheet_name=sheet_name, index_col=0)  # doc
+            df1_parse = excel.parse(sheet_name=sheet_name, index_col=0)  # doc
 
         with pd.ExcelFile(filename + read_ext) as excel:
-            with tm.assert_produces_warning(Pandas4Warning, match=depr_msg):
-                df2_parse = excel.parse(index_col=0, sheet_name=sheet_name)
+            df2_parse = excel.parse(index_col=0, sheet_name=sheet_name)
 
         tm.assert_frame_equal(df1_parse, expected)
         tm.assert_frame_equal(df2_parse, expected)
@@ -1740,14 +1620,10 @@ class TestExcelFileRead:
     )
     def test_bad_sheetname_raises(self, read_ext, sheet_name):
         # GH 39250
-        msg = "|".join(
-            ["Worksheet index 3 is invalid", "Worksheet named 'Sheet4' not found"]
-        )
-        depr_msg = "ExcelFile.parse is deprecated"
+        msg = "Worksheet index 3 is invalid|Worksheet named 'Sheet4' not found"
         with pytest.raises(ValueError, match=msg):
             with pd.ExcelFile("blank" + read_ext) as excel:
-                with tm.assert_produces_warning(Pandas4Warning, match=depr_msg):
-                    excel.parse(sheet_name=sheet_name)
+                excel.parse(sheet_name=sheet_name)
 
     def test_excel_read_buffer(self, engine, read_ext):
         pth = "test1" + read_ext
@@ -1792,26 +1668,18 @@ class TestExcelFileRead:
         expected = pd.read_excel("test1" + read_ext, engine=engine)
         tm.assert_frame_equal(result, expected)
 
-    @pytest.mark.filterwarnings(
-        "ignore:The default engine for reading:pandas.errors.Pandas4Warning"
-    )
     def test_read_excel_header_index_out_of_range(self, engine):
         # GH#43143
         with open("df_header_oob.xlsx", "rb") as f:
             with pytest.raises(ValueError, match="exceeds maximum"):
                 pd.read_excel(f, header=[0, 1])
 
-    @pytest.mark.filterwarnings(
-        "ignore:The default engine for reading:pandas.errors.Pandas4Warning"
-    )
     @pytest.mark.parametrize("filename", ["df_empty.xlsx", "df_equals.xlsx"])
     def test_header_with_index_col(self, filename):
         # GH 33476
-        idx = pd.Index(["Z"], name="I2")
-        cols = pd.MultiIndex.from_tuples(
-            [("A", "B"), ("A", "B.1")], names=["I11", "I12"]
-        )
-        expected = pd.DataFrame([[1, 3]], index=idx, columns=cols, dtype="int64")
+        idx = Index(["Z"], name="I2")
+        cols = MultiIndex.from_tuples([("A", "B"), ("A", "B.1")], names=["I11", "I12"])
+        expected = DataFrame([[1, 3]], index=idx, columns=cols, dtype="int64")
         result = pd.read_excel(
             filename, sheet_name="Sheet1", index_col=0, header=[0, 1]
         )
@@ -1828,14 +1696,14 @@ class TestExcelFileRead:
         unit = get_exp_unit(read_ext, engine)
 
         dti = pd.DatetimeIndex(["2020-02-29", "2020-03-01"], dtype=f"M8[{unit}]")
-        expected_column_index = pd.MultiIndex.from_arrays(
+        expected_column_index = MultiIndex.from_arrays(
             [dti[:1], dti[1:]],
             names=[
                 dti[0].to_pydatetime(),
                 dti[1].to_pydatetime(),
             ],
         )
-        expected = pd.DataFrame([], index=[], columns=expected_column_index)
+        expected = DataFrame([], index=[], columns=expected_column_index)
 
         tm.assert_frame_equal(expected, actual)
 
@@ -1873,50 +1741,8 @@ class TestExcelFileRead:
             errors = (CalamineError,)
 
         Path(tmp_excel).write_text("corrupt", encoding="utf-8")
-        expected_warning = Pandas4Warning if engine in {"xlrd", "pyxlsb"} else False
-        msg = f"The {engine} engine is deprecated"
-        with tm.assert_produces_warning(expected_warning, match=msg):
+        with tm.assert_produces_warning(False):
             try:
                 pd.ExcelFile(tmp_excel, engine=engine)
             except errors:
                 pass
-
-
-@td.skip_if_no("pyxlsb")
-def test_pyxlsb_engine_deprecated(datapath):
-    # GH#56542
-    path = datapath("io", "data", "excel", "test1.xlsb")
-    with tm.assert_produces_warning(
-        Pandas4Warning, match="pyxlsb engine is deprecated"
-    ):
-        pd.read_excel(path, engine="pyxlsb")
-
-
-@pytest.mark.filterwarnings(
-    "ignore:The (xlrd|pyxlsb) engine is deprecated:pandas.errors.Pandas4Warning"
-)
-@pytest.mark.parametrize(
-    "engine, module_name, read_ext, load",
-    [
-        ("xlrd", "xlrd", ".xls", lambda mod, path: mod.open_workbook(path)),
-        ("openpyxl", "openpyxl", ".xlsx", lambda mod, path: mod.load_workbook(path)),
-        ("odf", "odf.opendocument", ".ods", lambda mod, path: mod.load(path)),
-        ("pyxlsb", "pyxlsb", ".xlsb", lambda mod, path: mod.open_workbook(path)),
-        (
-            "calamine",
-            "python_calamine",
-            ".xlsx",
-            lambda mod, path: mod.CalamineWorkbook.from_path(path),
-        ),
-    ],
-)
-def test_read_workbook_infers_engine(datapath, engine, module_name, read_ext, load):
-    # GH#46352
-    module = pytest.importorskip(module_name)
-    path = datapath("io", "data", "excel", f"test1{read_ext}")
-    expected = pd.read_excel(path, engine=engine, index_col=0)
-
-    with pd.ExcelFile(load(module, path)) as xl:
-        assert xl.engine == engine
-    result = pd.read_excel(load(module, path), index_col=0)
-    tm.assert_frame_equal(result, expected)

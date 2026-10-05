@@ -4,13 +4,11 @@ Expose public exceptions & warnings
 
 from __future__ import annotations
 
-import abc
 import ctypes
 
 from pandas._config.config import OptionError
 
 from pandas._libs.tslibs import (
-    IncompatibleFrequency,
     OutOfBoundsDatetime,
     OutOfBoundsTimedelta,
 )
@@ -21,16 +19,6 @@ from pandas.util.version import InvalidVersion
 class IntCastingNaNError(ValueError):
     """
     Exception raised when converting (``astype``) an array with NaN to an integer type.
-
-    This error occurs when attempting to cast a data structure containing non-finite
-    values (such as NaN or infinity) to an integer data type. Integer types do not
-    support non-finite values, so such conversions are explicitly disallowed to
-    prevent silent data corruption or unexpected behavior.
-
-    See Also
-    --------
-    DataFrame.astype : Method to cast a pandas DataFrame object to a specified dtype.
-    Series.astype : Method to cast a pandas Series object to a specified dtype.
 
     Examples
     --------
@@ -47,11 +35,6 @@ class NullFrequencyError(ValueError):
     Particularly ``DatetimeIndex.shift``, ``TimedeltaIndex.shift``,
     ``PeriodIndex.shift``.
 
-    See Also
-    --------
-    Index.shift : Shift values of Index.
-    Series.shift : Shift values of Series.
-
     Examples
     --------
     >>> df = pd.DatetimeIndex(["2011-01-01 10:00", "2011-01-01"], freq=None)
@@ -64,15 +47,6 @@ class NullFrequencyError(ValueError):
 class PerformanceWarning(Warning):
     """
     Warning raised when there is a possible performance impact.
-
-    This warning is typically raised when an operation may be slower than
-    expected due to the data structure or access pattern being used.
-
-    See Also
-    --------
-    DataFrame.set_index : Set the DataFrame index using existing columns.
-    DataFrame.loc : Access a group of rows and columns by label(s) \
-    or a boolean array.
 
     Examples
     --------
@@ -96,159 +70,9 @@ class PerformanceWarning(Warning):
     """
 
 
-class PandasChangeWarning(Warning):
-    """
-    Warning raised for any upcoming change.
-
-    This is the base class for all pandas warnings that indicate upcoming
-    changes to the library's behavior.
-
-    See Also
-    --------
-    errors.PandasPendingDeprecationWarning : Class for deprecations that will raise a
-        PendingDeprecationWarning.
-    errors.PandasDeprecationWarning : Class for deprecations that will raise a
-        DeprecationWarning.
-    errors.PandasFutureWarning : Class for deprecations that will raise a FutureWarning.
-
-    Examples
-    --------
-    >>> pd.errors.PandasChangeWarning
-    <class 'pandas.errors.PandasChangeWarning'>
-    """
-
-    @classmethod
-    @abc.abstractmethod
-    def version(cls) -> str:
-        """Version where change will be enforced."""
-
-
-class PandasPendingDeprecationWarning(PandasChangeWarning, PendingDeprecationWarning):
-    """
-    Warning raised for an upcoming change that is a PendingDeprecationWarning.
-
-    This warning indicates a feature that will be deprecated in a future
-    version of pandas, but is not yet officially deprecated.
-
-    See Also
-    --------
-    errors.PandasChangeWarning: Class for deprecations that will raise any warning.
-    errors.PandasDeprecationWarning : Class for deprecations that will raise a
-        DeprecationWarning.
-    errors.PandasFutureWarning : Class for deprecations that will raise a FutureWarning.
-
-    Examples
-    --------
-    >>> pd.errors.PandasPendingDeprecationWarning
-    <class 'pandas.errors.PandasPendingDeprecationWarning'>
-    """
-
-
-class PandasDeprecationWarning(PandasChangeWarning, DeprecationWarning):
-    """
-    Warning raised for an upcoming change that is a DeprecationWarning.
-
-    This warning indicates a feature that is officially deprecated and will
-    be removed in a future version of pandas.
-
-    See Also
-    --------
-    errors.PandasChangeWarning: Class for deprecations that will raise any warning.
-    errors.PandasPendingDeprecationWarning : Class for deprecations that will raise a
-        PendingDeprecationWarning.
-    errors.PandasFutureWarning : Class for deprecations that will raise a FutureWarning.
-
-    Examples
-    --------
-    >>> pd.errors.PandasDeprecationWarning
-    <class 'pandas.errors.PandasDeprecationWarning'>
-    """
-
-
-class PandasFutureWarning(PandasChangeWarning, FutureWarning):
-    """
-    Warning raised for an upcoming change that is a FutureWarning.
-
-    This warning indicates a change in behavior that will occur in a future
-    version of pandas. Users should update their code accordingly.
-
-    See Also
-    --------
-    errors.PandasChangeWarning: Class for deprecations that will raise any warning.
-    errors.PandasPendingDeprecationWarning : Class for deprecations that will raise a
-        PendingDeprecationWarning.
-    errors.PandasDeprecationWarning : Class for deprecations that will raise a
-        DeprecationWarning.
-
-    Examples
-    --------
-    >>> pd.errors.PandasFutureWarning
-    <class 'pandas.errors.PandasFutureWarning'>
-    """
-
-
-class Pandas4Warning(PandasDeprecationWarning):
-    """
-    Warning raised for an upcoming change that will be enforced in pandas 4.0.
-
-    This warning indicates a deprecation that will be enforced when pandas
-    version 4.0 is released. Users should update their code before upgrading.
-
-    See Also
-    --------
-    errors.PandasChangeWarning: Class for deprecations that will raise any warning.
-    errors.PandasPendingDeprecationWarning : Class for deprecations that will raise a
-        PendingDeprecationWarning.
-    errors.PandasDeprecationWarning : Class for deprecations that will raise a
-        DeprecationWarning.
-    errors.PandasFutureWarning : Class for deprecations that will raise a FutureWarning.
-
-    Examples
-    --------
-    >>> pd.errors.Pandas4Warning
-    <class 'pandas.errors.Pandas4Warning'>
-    """
-
-    @classmethod
-    def version(cls) -> str:
-        """Version where change will be enforced."""
-        return "4.0"
-
-
-class Pandas5Warning(PandasPendingDeprecationWarning):
-    """
-    Warning raised for an upcoming change that will be enforced in pandas 5.0.
-
-    This warning indicates a pending deprecation that will be enforced when
-    pandas version 5.0 is released. Users should plan to update their code.
-
-    See Also
-    --------
-    errors.PandasChangeWarning: Class for deprecations that will raise any warning.
-    errors.PandasPendingDeprecationWarning : Class for deprecations that will raise a
-        PendingDeprecationWarning.
-    errors.PandasDeprecationWarning : Class for deprecations that will raise a
-        DeprecationWarning.
-    errors.PandasFutureWarning : Class for deprecations that will raise a FutureWarning.
-
-    Examples
-    --------
-    >>> pd.errors.Pandas5Warning
-    <class 'pandas.errors.Pandas5Warning'>
-    """
-
-    @classmethod
-    def version(cls) -> str:
-        """Version where change will be enforced."""
-        return "5.0"
-
-
-_CurrentDeprecationWarning = Pandas4Warning
-
-
 class UnsupportedFunctionCall(ValueError):
     """
-    Exception raised when attempting to call an unsupported numpy function.
+    Exception raised when attempting to call a unsupported numpy function.
 
     For example, ``np.cumsum(groupby_object)``.
 
@@ -275,11 +99,6 @@ class UnsortedIndexError(KeyError):
     Error raised when slicing a MultiIndex which has not been lexsorted.
 
     Subclass of `KeyError`.
-
-    See Also
-    --------
-    DataFrame.sort_index : Sort a DataFrame by its index.
-    DataFrame.set_index : Set the DataFrame index using existing columns.
 
     Examples
     --------
@@ -530,19 +349,17 @@ class AbstractMethodError(NotImplementedError):
     AbstractMethodError: This classmethod must be defined in the concrete class Foo
     """
 
-    def __init__(
-        self, class_instance: type | object, methodtype: str = "method"
-    ) -> None:
+    def __init__(self, class_instance, methodtype: str = "method") -> None:
         types = {"method", "classmethod", "staticmethod", "property"}
         if methodtype not in types:
             raise ValueError(
-                f"methodtype must be one of {types}, got {methodtype} instead."
+                f"methodtype must be one of {methodtype}, got {types} instead."
             )
         self.methodtype = methodtype
         self.class_instance = class_instance
 
     def __str__(self) -> str:
-        if isinstance(self.class_instance, type):
+        if self.methodtype == "classmethod":
             name = self.class_instance.__name__
         else:
             name = type(self.class_instance).__name__
@@ -552,16 +369,6 @@ class AbstractMethodError(NotImplementedError):
 class NumbaUtilError(Exception):
     """
     Error raised for unsupported Numba engine routines.
-
-    This exception is raised when attempting to use the Numba engine with
-    a function or operation that is not supported by Numba.
-
-    See Also
-    --------
-    DataFrame.groupby : Group DataFrame using a mapper or by a Series of columns.
-    Series.groupby : Group Series using a mapper or by a Series of columns.
-    DataFrame.agg : Aggregate using one or more operations over the specified axis.
-    Series.agg : Aggregate using one or more operations over the specified axis.
 
     Examples
     --------
@@ -580,19 +387,6 @@ class NumbaUtilError(Exception):
 class DuplicateLabelError(ValueError):
     """
     Error raised when an operation would introduce duplicate labels.
-
-    This error is typically encountered when performing operations on objects
-    with `allows_duplicate_labels=False` and the operation would result in
-    duplicate labels in the index. Duplicate labels can lead to ambiguities
-    in indexing and reduce data integrity.
-
-    See Also
-    --------
-    Series.set_flags : Return a new ``Series`` object with updated flags.
-    DataFrame.set_flags : Return a new ``DataFrame`` object with updated flags.
-    Series.reindex : Conform ``Series`` object to new index with optional filling logic.
-    DataFrame.reindex : Conform ``DataFrame`` object to new index with optional filling
-        logic.
 
     Examples
     --------
@@ -613,22 +407,18 @@ class InvalidIndexError(Exception):
     """
     Exception raised when attempting to use an invalid index key.
 
-    This exception is triggered when a user attempts to access or manipulate
-    data in a pandas DataFrame or Series using an index key that is not valid
-    for the given object. This may occur in cases such as using a malformed
-    slice, a mismatched key for a ``MultiIndex``, or attempting to access an index
-    element that does not exist.
-
-    See Also
-    --------
-    MultiIndex : A multi-level, or hierarchical, index object for pandas objects.
-
     Examples
     --------
-    >>> df = pd.DataFrame({"a": [1, 2], "b": [3, 4]})
-    >>> df[("a", slice(None))]
+    >>> idx = pd.MultiIndex.from_product([["x", "y"], [0, 1]])
+    >>> df = pd.DataFrame([[1, 1, 2, 2], [3, 3, 4, 4]], columns=idx)
+    >>> df
+        x       y
+        0   1   0   1
+    0   1   1   2   2
+    1   3   3   4   4
+    >>> df[:, 0]
     Traceback (most recent call last):
-    InvalidIndexError: ('a', slice(None, None, None))
+    InvalidIndexError: (slice(None, None, None), 0)
     """
 
 
@@ -638,11 +428,6 @@ class DataError(Exception):
 
     For example, calling ``ohlc`` on a non-numerical column or a function
     on a rolling window.
-
-    See Also
-    --------
-    Series.rolling : Provide rolling window calculations on Series object.
-    DataFrame.rolling : Provide rolling window calculations on DataFrame object.
 
     Examples
     --------
@@ -688,7 +473,7 @@ class ChainedAssignmentError(Warning):
     """
     Warning raised when trying to set using chained assignment.
 
-    With Copy-on-Write now always enabled, chained assignment can
+    When the ``mode.copy_on_write`` option is enabled, chained assignment can
     never work. In such a situation, we are always setting into a temporary
     object that is the result of an indexing operation (getitem), which under
     Copy-on-Write always behaves as a copy. Thus, assigning through a chain
@@ -697,17 +482,13 @@ class ChainedAssignmentError(Warning):
     For more information on Copy-on-Write,
     see :ref:`the user guide<copy_on_write>`.
 
-    See Also
-    --------
-    DataFrame.loc : Access a group of rows and columns by label(s) or a boolean array.
-    DataFrame.iloc : Purely integer-location based indexing for selection by position.
-    Series.loc : Access a group of rows by label(s) or a boolean array.
-
     Examples
     --------
+    >>> pd.options.mode.copy_on_write = True
     >>> df = pd.DataFrame({"A": [1, 1, 1, 2, 2]}, columns=["A"])
     >>> df["A"][0:3] = 10  # doctest: +SKIP
     ... # ChainedAssignmentError: ...
+    >>> pd.options.mode.copy_on_write = False
     """
 
 
@@ -718,11 +499,6 @@ class NumExprClobberingError(NameError):
     ``eval`` or ``query`` will throw the error if the engine is set
     to 'numexpr'. 'numexpr' is the default engine value for these methods if the
     numexpr package is installed.
-
-    See Also
-    --------
-    eval : Evaluate a Python expression as a string using various backends.
-    DataFrame.query : Query the columns of a DataFrame with a boolean expression.
 
     Examples
     --------
@@ -740,20 +516,6 @@ class UndefinedVariableError(NameError):
     Exception raised by ``query`` or ``eval`` when using an undefined variable name.
 
     It will also specify whether the undefined variable is local or not.
-
-    Parameters
-    ----------
-    name : str
-        The name of the undefined variable.
-    is_local : bool or None, optional
-        Indicates whether the undefined variable is considered a local variable.
-        If ``True``, the error message specifies it as a local variable.
-        If ``False`` or ``None``, the variable is treated as a non-local name.
-
-    See Also
-    --------
-    DataFrame.query : Query the columns of a DataFrame with a boolean expression.
-    DataFrame.eval : Evaluate a string describing operations on DataFrame columns.
 
     Examples
     --------
@@ -859,16 +621,7 @@ class CSSWarning(UserWarning):
 
 class PossibleDataLossError(Exception):
     """
-    Exception raised when trying to open an HDFStore file when already opened.
-
-    This error is triggered when there is a potential risk of data loss due to
-    conflicting operations on an HDFStore file. It serves to prevent unintended
-    overwrites or data corruption by enforcing exclusive access to the file.
-
-    See Also
-    --------
-    HDFStore : Dict-like IO interface for storing pandas objects in PyTables.
-    HDFStore.open : Open an HDFStore file in the specified mode.
+    Exception raised when trying to open a HDFStore file when already opened.
 
     Examples
     --------
@@ -914,12 +667,6 @@ class AttributeConflictWarning(Warning):
     name than the existing index on an HDFStore or attempting to append an index with a
     different frequency than the existing index on an HDFStore.
 
-    See Also
-    --------
-    HDFStore : Dict-like IO interface for storing pandas objects in PyTables.
-    DataFrame.to_hdf : Write the contained data to an HDF5 file using HDFStore.
-    read_hdf : Read from an HDF5 file into a DataFrame.
-
     Examples
     --------
     >>> idx1 = pd.Index(["a", "b"], name="name1")
@@ -948,7 +695,6 @@ class DatabaseError(OSError):
     >>> from sqlite3 import connect
     >>> conn = connect(":memory:")
     >>> pd.read_sql("select * test", conn)  # doctest: +SKIP
-    >>> conn.close()
     """
 
 
@@ -973,16 +719,6 @@ class PossiblePrecisionLoss(Warning):
 class ValueLabelTypeMismatch(Warning):
     """
     Warning raised by to_stata on a category column that contains non-string values.
-
-    When exporting data to Stata format using the `to_stata` method, category columns
-    must have string values as labels. If a category column contains non-string values
-    (e.g., integers, floats, or other types), this warning is raised to indicate that
-    the Stata file may not correctly represent the data.
-
-    See Also
-    --------
-    DataFrame.to_stata : Export DataFrame object to Stata dta format.
-    Series.cat : Accessor for categorical properties of the Series values.
 
     Examples
     --------
@@ -1011,7 +747,7 @@ class InvalidColumnName(Warning):
 
 class CategoricalConversionWarning(Warning):
     """
-    Warning is raised when reading a partial labeled Stata file using an iterator.
+    Warning is raised when reading a partial labeled Stata file using a iterator.
 
     This warning helps ensure data integrity and alerts users to potential issues
     during the incremental reading of Stata files with labeled data, allowing for
@@ -1061,38 +797,31 @@ class InvalidComparison(Exception):
 __all__ = [
     "AbstractMethodError",
     "AttributeConflictWarning",
-    "CSSWarning",
     "CategoricalConversionWarning",
     "ChainedAssignmentError",
     "ClosedFileError",
-    "DataError",
+    "CSSWarning",
     "DatabaseError",
+    "DataError",
     "DtypeWarning",
     "DuplicateLabelError",
     "EmptyDataError",
     "IncompatibilityWarning",
-    "IncompatibleFrequency",
-    "IndexingError",
     "IntCastingNaNError",
     "InvalidColumnName",
     "InvalidComparison",
     "InvalidIndexError",
     "InvalidVersion",
+    "IndexingError",
     "LossySetitemError",
     "MergeError",
     "NoBufferPresent",
     "NullFrequencyError",
-    "NumExprClobberingError",
     "NumbaUtilError",
+    "NumExprClobberingError",
     "OptionError",
     "OutOfBoundsDatetime",
     "OutOfBoundsTimedelta",
-    "Pandas4Warning",
-    "Pandas5Warning",
-    "PandasChangeWarning",
-    "PandasDeprecationWarning",
-    "PandasFutureWarning",
-    "PandasPendingDeprecationWarning",
     "ParserError",
     "ParserWarning",
     "PerformanceWarning",

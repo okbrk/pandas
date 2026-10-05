@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 import pandas as pd
+from pandas import Timedelta
 import pandas._testing as tm
 from pandas.core import nanops
 from pandas.core.arrays import TimedeltaArray
@@ -24,12 +25,12 @@ class TestReductions:
         arr = tdi.array
 
         result = tdi.sum(skipna=skipna)
-        assert isinstance(result, pd.Timedelta)
-        assert result == pd.Timedelta(0)
+        assert isinstance(result, Timedelta)
+        assert result == Timedelta(0)
 
         result = arr.sum(skipna=skipna)
-        assert isinstance(result, pd.Timedelta)
-        assert result == pd.Timedelta(0)
+        assert isinstance(result, Timedelta)
+        assert result == Timedelta(0)
 
     def test_min_max(self, unit):
         dtype = f"m8[{unit}]"
@@ -38,11 +39,11 @@ class TestReductions:
         )
 
         result = arr.min()
-        expected = pd.Timedelta("2h")
+        expected = Timedelta("2h")
         assert result == expected
 
         result = arr.max()
-        expected = pd.Timedelta("5h")
+        expected = Timedelta("5h")
         assert result == expected
 
         result = arr.min(skipna=False)
@@ -56,12 +57,12 @@ class TestReductions:
         arr = tdi.array
 
         result = arr.sum(skipna=True)
-        expected = pd.Timedelta(hours=17)
-        assert isinstance(result, pd.Timedelta)
+        expected = Timedelta(hours=17)
+        assert isinstance(result, Timedelta)
         assert result == expected
 
         result = tdi.sum(skipna=True)
-        assert isinstance(result, pd.Timedelta)
+        assert isinstance(result, Timedelta)
         assert result == expected
 
         result = arr.sum(skipna=False)
@@ -77,11 +78,11 @@ class TestReductions:
         assert result is pd.NaT
 
         result = arr.sum(min_count=1)
-        assert isinstance(result, pd.Timedelta)
+        assert isinstance(result, Timedelta)
         assert result == expected
 
         result = tdi.sum(min_count=1)
-        assert isinstance(result, pd.Timedelta)
+        assert isinstance(result, Timedelta)
         assert result == expected
 
     def test_npsum(self):
@@ -90,12 +91,12 @@ class TestReductions:
         arr = tdi.array
 
         result = np.sum(tdi)
-        expected = pd.Timedelta(hours=17)
-        assert isinstance(result, pd.Timedelta)
+        expected = Timedelta(hours=17)
+        assert isinstance(result, Timedelta)
         assert result == expected
 
         result = np.sum(arr)
-        assert isinstance(result, pd.Timedelta)
+        assert isinstance(result, Timedelta)
         assert result == expected
 
     def test_sum_2d_skipna_false(self):
@@ -108,20 +109,17 @@ class TestReductions:
         assert result is pd.NaT
 
         result = tda.sum(axis=0, skipna=False)
-        expected = pd.TimedeltaIndex(
-            [pd.Timedelta(seconds=12), pd.NaT], dtype="m8[ns]"
-        )._values
+        expected = pd.TimedeltaIndex([Timedelta(seconds=12), pd.NaT])._values
         tm.assert_timedelta_array_equal(result, expected)
 
         result = tda.sum(axis=1, skipna=False)
         expected = pd.TimedeltaIndex(
             [
-                pd.Timedelta(seconds=1),
-                pd.Timedelta(seconds=5),
-                pd.Timedelta(seconds=9),
+                Timedelta(seconds=1),
+                Timedelta(seconds=5),
+                Timedelta(seconds=9),
                 pd.NaT,
-            ],
-            dtype="m8[ns]",
+            ]
         )._values
         tm.assert_timedelta_array_equal(result, expected)
 
@@ -129,7 +127,7 @@ class TestReductions:
     @pytest.mark.parametrize(
         "add",
         [
-            pd.Timedelta(0).as_unit("us"),
+            Timedelta(0),
             pd.Timestamp("2021-01-01"),
             pd.Timestamp("2021-01-01", tz="UTC"),
             pd.Timestamp("2021-01-01", tz="Asia/Tokyo"),
@@ -140,12 +138,12 @@ class TestReductions:
         arr = tdi.array
 
         result = arr.std(skipna=True)
-        expected = pd.Timedelta(hours=2).as_unit("us")
-        assert isinstance(result, pd.Timedelta)
+        expected = Timedelta(hours=2)
+        assert isinstance(result, Timedelta)
         assert result == expected
 
         result = tdi.std(skipna=True)
-        assert isinstance(result, pd.Timedelta)
+        assert isinstance(result, Timedelta)
         assert result == expected
 
         if getattr(arr, "tz", None) is None:
@@ -169,12 +167,12 @@ class TestReductions:
         arr = tdi.array
 
         result = arr.median(skipna=True)
-        expected = pd.Timedelta(hours=2)
-        assert isinstance(result, pd.Timedelta)
+        expected = Timedelta(hours=2)
+        assert isinstance(result, Timedelta)
         assert result == expected
 
         result = tdi.median(skipna=True)
-        assert isinstance(result, pd.Timedelta)
+        assert isinstance(result, Timedelta)
         assert result == expected
 
         result = arr.median(skipna=False)
@@ -188,7 +186,7 @@ class TestReductions:
         arr = tdi._data
 
         # manually verified result
-        expected = pd.Timedelta(arr.dropna()._ndarray.mean())
+        expected = Timedelta(arr.dropna()._ndarray.mean())
 
         result = arr.mean()
         assert result == expected
@@ -210,7 +208,7 @@ class TestReductions:
         tm.assert_timedelta_array_equal(result, expected)
 
         result = tda.mean(axis=1)
-        expected = tda[:, 0] + pd.Timedelta(hours=12).as_unit("us")
+        expected = tda[:, 0] + Timedelta(hours=12)
         tm.assert_timedelta_array_equal(result, expected)
 
         result = tda.mean(axis=None)

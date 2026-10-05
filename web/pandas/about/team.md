@@ -4,35 +4,12 @@
 
 _pandas_ is made with love by more than [2,000 volunteer contributors](https://github.com/pandas-dev/pandas/graphs/contributors).
 
-If you want to support pandas development, you can find information on the [donate page](https://opencollective.com/pandas).
+If you want to support pandas development, you can find information in the [donations page]({{ base_url }}donate.html).
 
 ## Active maintainers
 
 <div class="card-group maintainers">
     {% for username in maintainers.active %}
-        {% set person = maintainers.github_info.get(username) %}
-        <div class="card">
-            <img class="card-img-top" alt="" src="{{ person.avatar_url }}"/>
-            <div class="card-body">
-                <h6 class="card-title">
-                    {% if person.blog %}
-                        <a href="{{ person.blog }}">
-                            {{ person.name or person.login }}
-                        </a>
-                    {% else %}
-                        {{ person.name or person.login }}
-                    {% endif %}
-                </h6>
-                <p class="card-text small"><a href="{{ person.html_url }}">{{ person.login }}</a></p>
-            </div>
-        </div>
-    {% endfor %}
-</div>
-
-## Maintainers of `pandas-stubs`
-
-<div class="card-group maintainers">
-    {% for username in maintainers.pandasstubs %}
         {% set person = maintainers.github_info.get(username) %}
         <div class="card">
             <img class="card-img-top" alt="" src="{{ person.avatar_url }}"/>
@@ -59,10 +36,12 @@ If you want to support pandas development, you can find information on the [dona
 > We have identified visible gaps and obstacles in sustaining diversity and inclusion in the open-source communities and we are proactive in increasing
 > the diversity of our team.
 > We have a [code of conduct]({{ base_url }}community/coc.html) to ensure a friendly and welcoming environment.
-> Please send an email to [pandas-code-of-conduct-committee](mailto:coc@pandas.pydata.org), if you think we can do a
+> Please send an email to [pandas-code-of-conduct-committee](mailto:pandas-coc@googlegroups.com), if you think we can do a
 > better job at achieving this goal.
 
 ## Governance
+
+Wes McKinney is the Benevolent Dictator for Life (BDFL).
 
 The project governance is available in the [project governance page]({{ base_url }}about/governance.html).
 

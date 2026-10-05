@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 import operator
 import os
 from sys import byteorder
-import threading
 from typing import (
     TYPE_CHECKING,
-    Any,
+    ContextManager,
 )
 
 import numpy as np
@@ -20,7 +18,7 @@ from pandas._config.localization import (
     set_locale,
 )
 
-from pandas.compat import HAS_PYARROW
+from pandas.compat import pa_version_under10p1
 
 import pandas as pd
 from pandas import (
@@ -70,6 +68,7 @@ from pandas._testing.compat import (
 )
 from pandas._testing.contexts import (
     decompress_file,
+    ensure_clean,
     raises_chained_assignment_error,
     set_timezone,
     with_csv_dialect,
@@ -83,18 +82,12 @@ from pandas.core.arrays._mixins import NDArrayBackedExtensionArray
 from pandas.core.construction import extract_array
 
 if TYPE_CHECKING:
-    from collections.abc import (
-        Callable,
-        Iterable,
-    )
-    from contextlib import AbstractContextManager
+    from collections.abc import Callable
 
     from pandas._typing import (
         Dtype,
         NpDtype,
     )
-
-    from pandas.core.arrays import ExtensionArray
 
 
 UNSIGNED_INT_NUMPY_DTYPES: list[NpDtype] = ["uint8", "uint16", "uint32", "uint64"]
@@ -190,7 +183,7 @@ NP_NAT_OBJECTS = [
     ]
 ]
 
-if HAS_PYARROW:
+if not pa_version_under10p1:
     import pyarrow as pa
 
     UNSIGNED_INT_PYARROW_DTYPES = [pa.uint8(), pa.uint16(), pa.uint32(), pa.uint64()]
@@ -272,42 +265,12 @@ arithmetic_dunder_methods = [
 
 comparison_dunder_methods = ["__eq__", "__ne__", "__le__", "__lt__", "__ge__", "__gt__"]
 
-comparison_ops = [
-    operator.eq,
-    operator.ne,
-    operator.gt,
-    operator.ge,
-    operator.lt,
-    operator.le,
-]
-
-numeric_reductions = [
-    "count",
-    "sum",
-    "max",
-    "min",
-    "mean",
-    "prod",
-    "std",
-    "var",
-    "median",
-    "kurt",
-    "skew",
-    "sem",
-]
-
-boolean_reductions = ["all", "any"]
-
-all_reductions = numeric_reductions + boolean_reductions
-
-numeric_accumulations = ["cumsum", "cumprod", "cummin", "cummax"]
-
 
 # -----------------------------------------------------------------------------
 # Comparators
 
 
-def box_expected(expected: Any, box_cls: Any, transpose: bool = True) -> Any:
+def box_expected(expected, box_cls, transpose: bool = True):
     """
     Helper function to wrap the expected output of a test in a given box_class.
 
@@ -327,7 +290,7 @@ def box_expected(expected: Any, box_cls: Any, transpose: bool = True) -> Any:
         else:
             expected = pd.array(expected, copy=False)
     elif box_cls is Index:
-        expected = Index(expected, copy=False)
+        expected = Index(expected)
     elif box_cls is Series:
         expected = Series(expected)
     elif box_cls is DataFrame:
@@ -348,7 +311,7 @@ def box_expected(expected: Any, box_cls: Any, transpose: bool = True) -> Any:
     return expected
 
 
-def to_array(obj: Any) -> ExtensionArray | np.ndarray:
+def to_array(obj):
     """
     Similar to pd.array, but does not cast numpy dtypes to nullable dtypes.
     """
@@ -365,7 +328,7 @@ class SubclassedSeries(Series):
     _metadata = ["testattr", "name"]
 
     @property
-    def _constructor(self) -> Callable[..., Any]:  # type: ignore[override]
+    def _constructor(self):
         # For testing, those properties return a generic callable, and not
         # the actual class. In this case that is equivalent, but it is to
         # ensure we don't rely on the property returning a class
@@ -374,7 +337,7 @@ class SubclassedSeries(Series):
         return lambda *args, **kwargs: SubclassedSeries(*args, **kwargs)
 
     @property
-    def _constructor_expanddim(self) -> Callable[..., Any]:
+    def _constructor_expanddim(self):
         return lambda *args, **kwargs: SubclassedDataFrame(*args, **kwargs)
 
 
@@ -382,12 +345,11 @@ class SubclassedDataFrame(DataFrame):
     _metadata = ["testattr"]
 
     @property
-    def _constructor(self) -> Callable[..., Any]:  # type: ignore[override]
+    def _constructor(self):
         return lambda *args, **kwargs: SubclassedDataFrame(*args, **kwargs)
 
-    # error: Cannot override writeable attribute with read-only property
     @property
-    def _constructor_sliced(self) -> Callable[..., Any]:  # type: ignore[override]
+    def _constructor_sliced(self):
         return lambda *args, **kwargs: SubclassedSeries(*args, **kwargs)
 
 
@@ -411,9 +373,7 @@ def convert_rows_list_to_csv_str(rows_list: list[str]) -> str:
     return sep.join(rows_list) + sep
 
 
-def external_error_raised(
-    expected_exception: type[Exception],
-) -> AbstractContextManager[Any]:
+def external_error_raised(expected_exception: type[Exception]) -> ContextManager:
     """
     Helper function to mark pytest.raises that have an external error message.
 
@@ -432,7 +392,30 @@ def external_error_raised(
     return pytest.raises(expected_exception, match=None)
 
 
-def get_op_from_name(op_name: str) -> Callable[..., Any]:
+def get_cython_table_params(ndframe, func_names_and_expected):
+    """
+    Combine frame, functions from com._cython_table
+    keys and expected result.
+
+    Parameters
+    ----------
+    ndframe : DataFrame or Series
+    func_names_and_expected : Sequence of two items
+        The first item is a name of a NDFrame method ('sum', 'prod') etc.
+        The second item is the expected return value.
+
+    Returns
+    -------
+    list
+        List of three items (DataFrame, function, expected result)
+    """
+    results = []
+    for func_name, expected in func_names_and_expected:
+        results.append((ndframe, func_name, expected))
+    return results
+
+
+def get_op_from_name(op_name: str) -> Callable:
     """
     The operator function for a given op name.
 
@@ -461,27 +444,27 @@ def get_op_from_name(op_name: str) -> Callable[..., Any]:
 # Indexing test helpers
 
 
-def getitem(x: Any) -> Any:
+def getitem(x):
     return x
 
 
-def setitem(x: Any) -> Any:
+def setitem(x):
     return x
 
 
-def loc(x: Any) -> Any:
+def loc(x):
     return x.loc
 
 
-def iloc(x: Any) -> Any:
+def iloc(x):
     return x.iloc
 
 
-def at(x: Any) -> Any:
+def at(x):
     return x.at
 
 
-def iat(x: Any) -> Any:
+def iat(x):
     return x.iat
 
 
@@ -499,22 +482,7 @@ def get_finest_unit(left: str, right: str) -> str:
     return right
 
 
-def _pa_buffer_addresses(pa_data: pa.ChunkedArray) -> set[int]:
-    """
-    Addresses of the non-empty buffers backing a pyarrow ChunkedArray.
-
-    Zero-length buffers are excluded because distinct empty arrays can be
-    handed out the same address, which would look like sharing.
-    """
-    return {
-        buf.address
-        for chunk in pa_data.iterchunks()
-        for buf in chunk.buffers()
-        if buf is not None and buf.size > 0
-    }
-
-
-def shares_memory(left: Any, right: Any) -> bool:
+def shares_memory(left, right) -> bool:
     """
     Pandas-compat for np.shares_memory.
     """
@@ -527,7 +495,7 @@ def shares_memory(left: Any, right: Any) -> bool:
     if isinstance(left, RangeIndex):
         return False
     if isinstance(left, MultiIndex):
-        return any(shares_memory(codes, right) for codes in left._codes)
+        return shares_memory(left._codes, right)
     if isinstance(left, (Index, Series)):
         if isinstance(right, (Index, Series)):
             return shares_memory(left._values, right._values)
@@ -543,22 +511,22 @@ def shares_memory(left: Any, right: Any) -> bool:
     if isinstance(left, ArrowExtensionArray):
         if isinstance(right, ArrowExtensionArray):
             # https://github.com/pandas-dev/pandas/pull/43930#discussion_r736862669
-            left_addrs = _pa_buffer_addresses(left._pa_array)
-            right_addrs = _pa_buffer_addresses(right._pa_array)
-            return not left_addrs.isdisjoint(right_addrs)
+            left_pa_data = left._pa_array
+            right_pa_data = right._pa_array
+            left_buf1 = left_pa_data.chunk(0).buffers()[1]
+            right_buf1 = right_pa_data.chunk(0).buffers()[1]
+            return left_buf1.address == right_buf1.address
         else:
-            # if we have one ArrowExtensionArray and one other array, assume
+            # if we have one one ArrowExtensionArray and one other array, assume
             # they can only share memory if they share the same numpy buffer
             return np.shares_memory(left, right)
 
-    if isinstance(left, BaseMaskedArray):
+    if isinstance(left, BaseMaskedArray) and isinstance(right, BaseMaskedArray):
         # By convention, we'll say these share memory if they share *either*
         #  the _data or the _mask
-        if isinstance(right, BaseMaskedArray):
-            return shares_memory(left._data, right._data) or shares_memory(
-                left._mask, right._mask
-            )
-        return shares_memory(left._data, right) or shares_memory(left._mask, right)
+        return np.shares_memory(left._data, right._data) or np.shares_memory(
+            left._mask, right._mask
+        )
 
     if isinstance(left, DataFrame) and len(left._mgr.blocks) == 1:
         arr = left._mgr.blocks[0].values
@@ -567,65 +535,11 @@ def shares_memory(left: Any, right: Any) -> bool:
     raise NotImplementedError(type(left), type(right))
 
 
-def run_multithreaded(
-    closure: Callable[..., Any],
-    max_workers: int,
-    arguments: Iterable[Any] | None = None,
-    pass_barrier: bool = False,
-) -> None:
-    with ThreadPoolExecutor(max_workers=max_workers) as tpe:
-        if arguments is None:
-            arguments = []
-        else:
-            arguments = list(arguments)
-
-        if pass_barrier:
-            barrier = threading.Barrier(max_workers)
-            arguments.append(barrier)
-
-        try:
-            futures = []
-            for _ in range(max_workers):
-                futures.append(tpe.submit(closure, *arguments))  # noqa: PERF401
-        except RuntimeError as e:
-            import pytest
-
-            pytest.skip(
-                f"Spawning {max_workers} threads failed with "
-                f"error {e!r} (likely due to resource limits on the "
-                "system running the tests)"
-            )
-        finally:
-            if len(futures) < max_workers and pass_barrier:
-                barrier.abort()
-        for f in futures:
-            f.result()
-
-
 __all__ = [
     "ALL_INT_EA_DTYPES",
     "ALL_INT_NUMPY_DTYPES",
     "ALL_NUMPY_DTYPES",
     "ALL_REAL_NUMPY_DTYPES",
-    "BOOL_DTYPES",
-    "BYTES_DTYPES",
-    "COMPLEX_DTYPES",
-    "DATETIME64_DTYPES",
-    "ENDIAN",
-    "FLOAT_EA_DTYPES",
-    "FLOAT_NUMPY_DTYPES",
-    "NARROW_NP_DTYPES",
-    "NP_NAT_OBJECTS",
-    "NULL_OBJECTS",
-    "OBJECT_DTYPES",
-    "SIGNED_INT_EA_DTYPES",
-    "SIGNED_INT_NUMPY_DTYPES",
-    "STRING_DTYPES",
-    "TIMEDELTA64_DTYPES",
-    "UNSIGNED_INT_EA_DTYPES",
-    "UNSIGNED_INT_NUMPY_DTYPES",
-    "SubclassedDataFrame",
-    "SubclassedSeries",
     "assert_almost_equal",
     "assert_attr_equal",
     "assert_categorical_equal",
@@ -649,31 +563,51 @@ __all__ = [
     "assert_sp_array_equal",
     "assert_timedelta_array_equal",
     "at",
+    "BOOL_DTYPES",
     "box_expected",
+    "BYTES_DTYPES",
     "can_set_locale",
+    "COMPLEX_DTYPES",
     "convert_rows_list_to_csv_str",
+    "DATETIME64_DTYPES",
     "decompress_file",
+    "ENDIAN",
+    "ensure_clean",
     "external_error_raised",
+    "FLOAT_EA_DTYPES",
+    "FLOAT_NUMPY_DTYPES",
+    "get_cython_table_params",
     "get_dtype",
-    "get_finest_unit",
+    "getitem",
     "get_locales",
+    "get_finest_unit",
     "get_obj",
     "get_op_from_name",
-    "getitem",
     "iat",
     "iloc",
     "loc",
     "maybe_produces_warning",
+    "NARROW_NP_DTYPES",
+    "NP_NAT_OBJECTS",
+    "NULL_OBJECTS",
+    "OBJECT_DTYPES",
     "raise_assert_detail",
     "raises_chained_assignment_error",
     "round_trip_pathlib",
     "round_trip_pickle",
-    "run_multithreaded",
+    "setitem",
     "set_locale",
     "set_timezone",
-    "setitem",
     "shares_memory",
+    "SIGNED_INT_EA_DTYPES",
+    "SIGNED_INT_NUMPY_DTYPES",
+    "STRING_DTYPES",
+    "SubclassedDataFrame",
+    "SubclassedSeries",
+    "TIMEDELTA64_DTYPES",
     "to_array",
+    "UNSIGNED_INT_EA_DTYPES",
+    "UNSIGNED_INT_NUMPY_DTYPES",
     "with_csv_dialect",
     "write_to_compressed",
 ]

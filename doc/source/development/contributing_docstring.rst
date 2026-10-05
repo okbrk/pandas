@@ -78,6 +78,9 @@ about reStructuredText can be found in:
 * `Quick reStructuredText reference <https://docutils.sourceforge.io/docs/user/rst/quickref.html>`_
 * `Full reStructuredText specification <https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html>`_
 
+pandas has some helpers for sharing docstrings between related classes, see
+:ref:`docstring.sharing`.
+
 The rest of this document will summarize all the above guidelines, and will
 provide additional conventions specific to the pandas project.
 
@@ -114,9 +117,6 @@ backticks. The following are considered inline code:
     as the link text. See `Sphinx cross-referencing syntax
     <https://www.sphinx-doc.org/en/stable/domains.html#cross-referencing-syntax>`_
     for details.
-
-When referring to missing values in general, use "NA". Use ``NaN``, ``NaT`` or
-``pd.NA`` only when referring to that specific value.
 
 **Good:**
 
@@ -239,9 +239,6 @@ Every paragraph in the extended summary ends with a dot.
 The extended summary should provide details on why the function is useful and
 their use cases, if it is not too generic.
 
-If a section of the user guide covers the function, link to it from the
-extended summary.
-
 .. code-block:: python
 
     def unstack():
@@ -255,8 +252,6 @@ extended summary.
 
         The index level will be automatically removed from the index when added
         as columns.
-
-        See the :ref:`user guide <reshaping.stacking>` for more.
         """
         pass
 
@@ -404,12 +399,6 @@ DataFrame:
 * pandas.Categorical
 * pandas.arrays.SparseArray
 
-For row or column labels, use label rather than ``str``, since labels need not
-be strings:
-
-* label
-* label or list of labels
-
 If the exact type is not relevant, but must be compatible with a NumPy
 array, array-like can be specified. If Any type that can be iterated is
 accepted, iterable can be used:
@@ -430,18 +419,6 @@ the list.
 For axis, the convention is to use something like:
 
 * axis : {0 or 'index', 1 or 'columns', None}, default None
-
-Do not use Sphinx cross-reference roles in types; link the object from the
-description instead:
-
-.. code-block:: python
-
-    """
-    Returns
-    -------
-    matplotlib.axes.Axes
-        The :class:`~matplotlib.axes.Axes` the plot was drawn on.
-    """
 
 .. _docstring.returns:
 
@@ -549,20 +526,19 @@ examples:
 * ``fillna`` and ``dropna``, as both methods are used to handle missing values
 * ``read_csv`` and ``to_csv``, as they are complementary
 * ``merge`` and ``join``, as one is a generalization of the other
-* ``astype`` and ``to_datetime``, as users may be reading the
+* ``astype`` and ``pandas.to_datetime``, as users may be reading the
   documentation of ``astype`` to know how to cast as a date, and the way to do
-  it is with ``to_datetime``
+  it is with ``pandas.to_datetime``
 * ``where`` is related to ``numpy.where``, as its functionality is based on it
 
 When deciding what is related, you should mainly use your common sense and
 think about what can be useful for the users reading the documentation,
 especially the less experienced ones.
 
-In See Also, refer to pandas objects without the ``pandas.`` prefix (e.g.
-``DataFrame.tail``, ``to_datetime``). When relating to other libraries (mainly
-``numpy``), use the name of the module first (not an alias like ``np``). If the
-function is in a module which is not the main one, like ``scipy.sparse``, list
-the full module (e.g. ``scipy.sparse.coo_matrix``).
+When relating to other libraries (mainly ``numpy``), use the name of the module
+first (not an alias like ``np``). If the function is in a module which is not
+the main one, like ``scipy.sparse``, list the full module (e.g.
+``scipy.sparse.coo_matrix``).
 
 This section has a header, "See Also" (note the capital
 S and A), followed by the line with hyphens and preceded by a blank line.
@@ -948,3 +924,76 @@ plot will be generated automatically when building the documentation.
                 >>> ser.plot()
             """
             pass
+
+.. _docstring.sharing:
+
+Sharing docstrings
+------------------
+
+pandas has a system for sharing docstrings, with slight variations, between
+classes. This helps us keep docstrings consistent, while keeping things clear
+for the user reading. It comes at the cost of some complexity when writing.
+
+Each shared docstring will have a base template with variables, like
+``{klass}``. The variables filled in later on using the ``doc`` decorator.
+Finally, docstrings can also be appended to with the ``doc`` decorator.
+
+In this example, we'll create a parent docstring normally (this is like
+``pandas.core.generic.NDFrame``). Then we'll have two children (like
+``pandas.Series`` and ``pandas.DataFrame``). We'll
+substitute the class names in this docstring.
+
+.. code-block:: python
+
+   class Parent:
+       @doc(klass="Parent")
+       def my_function(self):
+           """Apply my function to {klass}."""
+           ...
+
+
+   class ChildA(Parent):
+       @doc(Parent.my_function, klass="ChildA")
+       def my_function(self):
+           ...
+
+
+   class ChildB(Parent):
+       @doc(Parent.my_function, klass="ChildB")
+       def my_function(self):
+           ...
+
+The resulting docstrings are
+
+.. code-block:: python
+
+   >>> print(Parent.my_function.__doc__)
+   Apply my function to Parent.
+   >>> print(ChildA.my_function.__doc__)
+   Apply my function to ChildA.
+   >>> print(ChildB.my_function.__doc__)
+   Apply my function to ChildB.
+
+Notice:
+
+1. We "append" the parent docstring to the children docstrings, which are
+   initially empty.
+
+Our files will often contain a module-level ``_shared_doc_kwargs`` with some
+common substitution values (things like ``klass``, ``axes``, etc).
+
+You can substitute and append in one shot with something like
+
+.. code-block:: python
+
+   @doc(template, **_shared_doc_kwargs)
+   def my_function(self):
+       ...
+
+where ``template`` may come from a module-level ``_shared_docs`` dictionary
+mapping function names to docstrings. Wherever possible, we prefer using
+``doc``, since the docstring-writing processes is slightly closer to normal.
+
+See ``pandas.core.generic.NDFrame.fillna`` for an example template, and
+``pandas.Series.fillna`` and ``pandas.core.generic.frame.fillna``
+for the filled versions.

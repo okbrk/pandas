@@ -1,7 +1,10 @@
 import numpy as np
 import pytest
 
-import pandas as pd
+from pandas import (
+    Series,
+    array,
+)
 
 
 @pytest.fixture(params=[None, False])
@@ -29,7 +32,7 @@ def freq_sample(request):
     return request.param
 
 
-@pytest.fixture(params=[list, tuple, np.array, pd.array, pd.Series])
+@pytest.fixture(params=[list, tuple, np.array, array, Series])
 def listlike_box(request):
     """
     Types that may be passed as the indexer to searchsorted.

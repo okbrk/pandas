@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import inspect
 import types
-from typing import (
-    TYPE_CHECKING,
-    Any,
-)
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -44,7 +41,7 @@ def get_jit_arguments(engine_kwargs: dict[str, bool] | None = None) -> dict[str,
     Returns
     -------
     dict[str, bool]
-        nogil, parallel
+        nopython, nogil, parallel
 
     Raises
     ------
@@ -53,12 +50,13 @@ def get_jit_arguments(engine_kwargs: dict[str, bool] | None = None) -> dict[str,
     if engine_kwargs is None:
         engine_kwargs = {}
 
+    nopython = engine_kwargs.get("nopython", True)
     nogil = engine_kwargs.get("nogil", False)
     parallel = engine_kwargs.get("parallel", False)
-    return {"nogil": nogil, "parallel": parallel}
+    return {"nopython": nopython, "nogil": nogil, "parallel": parallel}
 
 
-def jit_user_function(func: Callable[..., Any]) -> Callable[..., Any]:
+def jit_user_function(func: Callable) -> Callable:
     """
     If user function is not jitted already, mark the user's function
     as jitable.
@@ -78,7 +76,7 @@ def jit_user_function(func: Callable[..., Any]) -> Callable[..., Any]:
     else:
         numba = import_optional_dependency("numba")
 
-    if numba.extending.is_jitted(func):  # pyright: ignore[reportAttributeAccessIssue]
+    if numba.extending.is_jitted(func):
         # Don't jit a user passed jitted function
         numba_func = func
     elif getattr(np, func.__name__, False) is func or isinstance(
@@ -86,9 +84,9 @@ def jit_user_function(func: Callable[..., Any]) -> Callable[..., Any]:
     ):
         # Not necessary to jit builtins or np functions
         # This will mess up register_jitable
-        numba_func = func  # type: ignore[assignment]
+        numba_func = func
     else:
-        numba_func = numba.extending.register_jitable(func)  # type: ignore[arg-type]
+        numba_func = numba.extending.register_jitable(func)
 
     return numba_func
 
@@ -97,12 +95,8 @@ _sentinel = object()
 
 
 def prepare_function_arguments(
-    func: Callable[..., Any],
-    args: tuple[Any, ...],
-    kwargs: dict[str, Any],
-    *,
-    num_required_args: int,
-) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    func: Callable, args: tuple, kwargs: dict, *, num_required_args: int
+) -> tuple[tuple, dict]:
     """
     Prepare arguments for jitted function. As numba functions do not support kwargs,
     we try to move kwargs into args if possible.

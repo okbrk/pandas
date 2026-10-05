@@ -168,10 +168,7 @@ def _preparse(
     the ``tokenize`` module and ``tokval`` is a string.
     """
     assert callable(f), "f must be callable"
-    return tokenize.untokenize(
-        f(x)
-        for x in tokenize_string(source)  # pyright: ignore[reportArgumentType]
-    )
+    return tokenize.untokenize(f(x) for x in tokenize_string(source))  # pyright: ignore[reportArgumentType]
 
 
 def _is_type(t):
@@ -383,11 +380,11 @@ class BaseExprVisitor(ast.NodeVisitor):
         "FloorDiv",
         "Mod",
     )
-    binary_op_nodes_map = dict(zip(binary_ops, binary_op_nodes, strict=True))
+    binary_op_nodes_map = dict(zip(binary_ops, binary_op_nodes))
 
     unary_ops = UNARY_OPS_SYMS
     unary_op_nodes = "UAdd", "USub", "Invert", "Not"
-    unary_op_nodes_map = dict(zip(unary_ops, unary_op_nodes, strict=True))
+    unary_op_nodes_map = dict(zip(unary_ops, unary_op_nodes))
 
     rewrite_map = {
         ast.Eq: ast.In,
@@ -438,21 +435,19 @@ class BaseExprVisitor(ast.NodeVisitor):
             left_list, right_list = map(_is_list, (left, right))
             left_str, right_str = map(_is_str, (left, right))
 
-            # ==/!= against a scalar string stays elementwise, since isin
-            # does not parse strings for datetimelike dtypes (GH#54199)
-            if left_list or right_list:
+            # if there are any strings or lists in the expression
+            if left_list or right_list or left_str or right_str:
                 op_instance = self.rewrite_map[op_type]()
 
-            if isinstance(op_instance, (ast.In, ast.NotIn)):
-                # pop the string variable out of locals and replace it with a
-                # list of one string, kind of a hack
-                if right_str:
-                    name = self.env.add_tmp([right.value])
-                    right = self.term_type(name, self.env)
+            # pop the string variable out of locals and replace it with a list
+            # of one string, kind of a hack
+            if right_str:
+                name = self.env.add_tmp([right.value])
+                right = self.term_type(name, self.env)
 
-                if left_str:
-                    name = self.env.add_tmp([left.value])
-                    left = self.term_type(name, self.env)
+            if left_str:
+                name = self.env.add_tmp([left.value])
+                left = self.term_type(name, self.env)
 
         op = self.visit(op_instance)
         return op, op_instance, left, right
@@ -517,7 +512,8 @@ class BaseExprVisitor(ast.NodeVisitor):
             )
 
         if self.engine != "pytables" and (
-            (res.op in CMP_OPS_SYMS and getattr(lhs, "is_datetime", False))
+            res.op in CMP_OPS_SYMS
+            and getattr(lhs, "is_datetime", False)
             or getattr(rhs, "is_datetime", False)
         ):
             # all date ops must be done in python bc numexpr doesn't work
@@ -582,23 +578,10 @@ class BaseExprVisitor(ast.NodeVisitor):
         from pandas import eval as pd_eval
 
         value = self.visit(node.value)
-        if isinstance(node.slice, ast.Tuple):
-            # visit_Tuple builds a list, which __getitem__ reads as a single
-            #  axis-0 selector rather than a multi-axis key (GH#49905)
-            raise NotImplementedError("multi-dimensional subscripts are not supported")
         slobj = self.visit(node.slice)
-        if isinstance(slobj, slice):
-            # visit_Slice returns a bare slice; re-parsing it would stringify it into
-            # a slice(...) call, which is not a supported function (GH#49905)
-            result = slobj
-        elif is_term(slobj):
-            # already resolved; re-parsing pushes it back through numexpr
-            result = slobj.value
-        else:
-            # an Op still needs the engine, which aligns Series operands
-            result = pd_eval(
-                slobj, local_dict=self.env, engine=self.engine, parser=self.parser
-            )
+        result = pd_eval(
+            slobj, local_dict=self.env, engine=self.engine, parser=self.parser
+        )
         try:
             # a Term instance
             v = value.value[result]
@@ -615,13 +598,13 @@ class BaseExprVisitor(ast.NodeVisitor):
         """df.index[slice(4,6)]"""
         lower = node.lower
         if lower is not None:
-            lower = self.visit(lower)(self.env)
+            lower = self.visit(lower).value
         upper = node.upper
         if upper is not None:
-            upper = self.visit(upper)(self.env)
+            upper = self.visit(upper).value
         step = node.step
         if step is not None:
-            step = self.visit(step)(self.env)
+            step = self.visit(step).value
 
         return slice(lower, upper, step)
 
@@ -662,11 +645,7 @@ class BaseExprVisitor(ast.NodeVisitor):
         ctx = node.ctx
         if isinstance(ctx, ast.Load):
             # resolve the value
-            visited_value = self.visit(value)
-            if hasattr(visited_value, "value"):
-                resolved = visited_value.value
-            else:
-                resolved = visited_value(self.env)
+            resolved = self.visit(value).value
             try:
                 v = getattr(resolved, attr)
                 name = self.env.add_tmp(v)
@@ -698,7 +677,7 @@ class BaseExprVisitor(ast.NodeVisitor):
         if res is None:
             # error: "expr" has no attribute "id"
             raise ValueError(
-                f"Invalid function call {node.func.id}"  # type: ignore[union-attr]
+                f"Invalid function call {node.func.id}"  # type: ignore[attr-defined]
             )
         if hasattr(res, "value"):
             res = res.value
@@ -718,10 +697,9 @@ class BaseExprVisitor(ast.NodeVisitor):
 
             for key in node.keywords:
                 if not isinstance(key, ast.keyword):
-                    # error: Item "Attribute" of "Attribute | Name" has no
-                    # attribute "id"
+                    # error: "expr" has no attribute "id"
                     raise ValueError(
-                        f"keyword error in function call '{node.func.id}'"  # type: ignore[union-attr]
+                        "keyword error in function call " f"'{node.func.id}'"  # type: ignore[attr-defined]
                     )
 
                 if key.arg:
@@ -740,29 +718,13 @@ class BaseExprVisitor(ast.NodeVisitor):
         # base case: we have something like a CMP b
         if len(comps) == 1:
             op = self.translate_In(ops[0])
-            # GH#65357: Unroll `in` / `not in` into row-wise comparisons (== / !=)
-            # if the RHS tuple contains variables. This prevents passing Series
-            # objects to isin(), which strictly expects scalar iterables.
-            if isinstance(ops[0], (ast.In, ast.NotIn)) and isinstance(
-                comps[0], (ast.Tuple, ast.List)
-            ):
-                elts = comps[0].elts
-                if any(isinstance(e, ast.Name) for e in elts):
-                    cmp_op = ast.Eq() if isinstance(ops[0], ast.In) else ast.NotEq()
-                    bool_op = ast.Or() if isinstance(ops[0], ast.In) else ast.And()
-                    new_values: list[ast.expr] = [
-                        ast.Compare(left=node.left, ops=[cmp_op], comparators=[elt])
-                        for elt in elts
-                    ]
-                    return self.visit(ast.BoolOp(op=bool_op, values=new_values))
-
             binop = ast.BinOp(op=op, left=node.left, right=comps[0])
             return self.visit(binop)
 
         # recursive case: we have a chained comparison, a CMP b CMP c, etc.
         left = node.left
         values = []
-        for op, comp in zip(ops, comps, strict=True):
+        for op, comp in zip(ops, comps):
             new_node = self.visit(
                 ast.Compare(comparators=[comp], left=left, ops=[self.translate_In(op)])
             )

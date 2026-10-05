@@ -1,25 +1,17 @@
 from __future__ import annotations
 
-import importlib
-import inspect
-import pathlib
-import pkgutil
-
 import pytest
 
-from pandas.errors import Pandas4Warning
-
 import pandas as pd
+from pandas import api
 import pandas._testing as tm
 from pandas.api import (
-    executors as api_executors,
     extensions as api_extensions,
     indexers as api_indexers,
     interchange as api_interchange,
     types as api_types,
     typing as api_typing,
 )
-from pandas.api.typing import aliases as api_aliases
 
 
 class Base:
@@ -55,7 +47,7 @@ class TestPDApi(Base):
         "io",
         "tseries",
     ]
-    private_lib = ["compat", "core", "pandas", "util"]
+    private_lib = ["compat", "core", "pandas", "util", "_built_with_meson"]
 
     # misc
     misc = ["IndexSlice", "NaT", "NA"]
@@ -102,7 +94,6 @@ class TestPDApi(Base):
         "Float32Dtype",
         "Float64Dtype",
         "NamedAgg",
-        "NamedFunc",
     ]
 
     # these are already deprecated; awaiting removal
@@ -115,7 +106,6 @@ class TestPDApi(Base):
     funcs = [
         "array",
         "bdate_range",
-        "col",
         "concat",
         "crosstab",
         "cut",
@@ -177,7 +167,6 @@ class TestPDApi(Base):
         "read_parquet",
         "read_orc",
         "read_spss",
-        "read_iceberg",
     ]
 
     # top-level json funcs
@@ -202,8 +191,8 @@ class TestPDApi(Base):
         "_testing",
         "_typing",
     ]
-
-    metadata = ["__git_version__", "__version__"]
+    if not pd._built_with_meson:
+        private_modules.append("_version")
 
     def test_api(self):
         checkthese = (
@@ -232,7 +221,6 @@ class TestPDApi(Base):
             + self.funcs_read
             + self.funcs_json
             + self.funcs_to
-            + self.metadata
         ) - set(self.deprecated_classes)
         actual = set(pd.__all__)
 
@@ -249,13 +237,12 @@ class TestPDApi(Base):
             + self.deprecated_funcs_in_future
         )
         for depr in deprecated_list:
-            with tm.assert_produces_warning(FutureWarning, match="deprecated"):
+            with tm.assert_produces_warning(FutureWarning):
                 _ = getattr(pd, depr)
 
 
 class TestApi(Base):
     allowed_api_dirs = [
-        "executors",
         "types",
         "extensions",
         "indexers",
@@ -265,28 +252,25 @@ class TestApi(Base):
     ]
     allowed_typing = [
         "DataFrameGroupBy",
-        "DatetimeIndexResamplerGroupBy",
+        "DatetimeIndexResamplerGroupby",
         "Expanding",
-        "ExpandingGroupBy",
+        "ExpandingGroupby",
         "ExponentialMovingWindow",
-        "ExponentialMovingWindowGroupBy",
-        "Expression",
+        "ExponentialMovingWindowGroupby",
         "FrozenList",
         "JsonReader",
         "NaTType",
         "NAType",
-        "NoDefault",
-        "PeriodIndexResamplerGroupBy",
+        "PeriodIndexResamplerGroupby",
         "Resampler",
         "Rolling",
-        "RollingGroupBy",
+        "RollingGroupby",
         "SeriesGroupBy",
         "StataReader",
         "SASReader",
-        "TimedeltaIndexResamplerGroupBy",
+        "TimedeltaIndexResamplerGroupby",
         "TimeGrouper",
         "Window",
-        "aliases",
     ]
     allowed_api_types = [
         "is_any_real_numeric_dtype",
@@ -353,82 +337,9 @@ class TestApi(Base):
         "ExtensionArray",
         "ExtensionScalarOpsMixin",
     ]
-    allowed_api_executors = ["BaseExecutionEngine"]
-    allowed_api_aliases = [
-        "AggFuncType",
-        "AlignJoin",
-        "AnyAll",
-        "AnyArrayLike",
-        "ArrayLike",
-        "AstypeArg",
-        "Axes",
-        "Axis",
-        "CSVEngine",
-        "ColspaceArgType",
-        "CompressionOptions",
-        "CorrelationMethod",
-        "DropKeep",
-        "Dtype",
-        "DtypeArg",
-        "DtypeBackend",
-        "DtypeObj",
-        "ExcelWriterIfSheetExists",
-        "ExcelWriterMergeCells",
-        "FilePath",
-        "FillnaOptions",
-        "FloatFormatType",
-        "FormattersType",
-        "FromDictOrient",
-        "HTMLFlavors",
-        "IgnoreRaise",
-        "IndexLabel",
-        "InterpolateOptions",
-        "IntervalClosedType",
-        "IntervalLeftRight",
-        "JSONEngine",
-        "JSONSerializable",
-        "JoinHow",
-        "JoinValidate",
-        "ListLike",
-        "MergeHow",
-        "MergeValidate",
-        "NaPosition",
-        "NsmallestNlargestKeep",
-        "OpenFileErrors",
-        "Ordered",
-        "ParquetCompressionOptions",
-        "QuantileInterpolation",
-        "ReadBuffer",
-        "ReadCsvBuffer",
-        "ReadPickleBuffer",
-        "ReindexMethod",
-        "Scalar",
-        "ScalarIndexer",
-        "SequenceIndexer",
-        "SequenceNotStr",
-        "SliceType",
-        "SortKind",
-        "StorageOptions",
-        "Suffixes",
-        "TakeIndexer",
-        "TimeAmbiguous",
-        "TimeGrouperOrigin",
-        "TimeNonexistent",
-        "TimeUnit",
-        "TimedeltaConvertibleTypes",
-        "TimestampConvertibleTypes",
-        "ToStataByteorder",
-        "ToTimestampHow",
-        "UpdateJoin",
-        "UsecolsArgType",
-        "WindowingRankType",
-        "WriteBuffer",
-        "WriteExcelBuffer",
-        "XMLParsers",
-    ]
 
     def test_api(self):
-        self.check(pd.api, self.allowed_api_dirs)
+        self.check(api, self.allowed_api_dirs)
 
     def test_api_typing(self):
         self.check(api_typing, self.allowed_typing)
@@ -445,47 +356,10 @@ class TestApi(Base):
     def test_api_extensions(self):
         self.check(api_extensions, self.allowed_api_extensions)
 
-    def test_api_executors(self):
-        self.check(api_executors, self.allowed_api_executors)
-
-    def test_api_typing_aliases(self):
-        self.check(api_aliases, self.allowed_api_aliases)
-
-    @pytest.mark.parametrize(
-        "old, new",
-        [
-            ("DatetimeIndexResamplerGroupby", "DatetimeIndexResamplerGroupBy"),
-            ("ExpandingGroupby", "ExpandingGroupBy"),
-            ("ExponentialMovingWindowGroupby", "ExponentialMovingWindowGroupBy"),
-            ("PeriodIndexResamplerGroupby", "PeriodIndexResamplerGroupBy"),
-            ("RollingGroupby", "RollingGroupBy"),
-            ("TimedeltaIndexResamplerGroupby", "TimedeltaIndexResamplerGroupBy"),
-        ],
-    )
-    def test_api_typing_deprecated_groupby_spelling(self, old, new):
-        # GH#49578
-        msg = f"pandas.api.typing.{old} is deprecated"
-        with tm.assert_produces_warning(Pandas4Warning, match=msg):
-            result = getattr(api_typing, old)
-        assert result is getattr(api_typing, new)
-
-    def test_api_typing_deprecated_groupby_spelling_import(self):
-        # GH#49578 the "from ... import" spelling goes through the same shim
-        msg = "pandas.api.typing.RollingGroupby is deprecated"
-        with tm.assert_produces_warning(Pandas4Warning, match=msg):
-            from pandas.api.typing import RollingGroupby
-
-        assert RollingGroupby is api_typing.RollingGroupBy
-
-    def test_api_typing_unknown_attribute(self):
-        with pytest.raises(AttributeError, match="has no attribute 'DoesNotExist'"):
-            api_typing.DoesNotExist
-
 
 class TestErrors(Base):
     def test_errors(self):
-        ignored = ["_CurrentDeprecationWarning", "abc", "ctypes", "cow"]
-        self.check(pd.errors, pd.errors.__all__, ignored=ignored)
+        self.check(pd.errors, pd.errors.__all__, ignored=["ctypes", "cow"])
 
 
 class TestUtil(Base):
@@ -515,94 +389,31 @@ class TestTesting(Base):
     ]
 
     def test_testing(self):
-        self.check(pd.testing, self.funcs)
+        from pandas import testing
+
+        self.check(testing, self.funcs)
 
     def test_util_in_top_level(self):
         with pytest.raises(AttributeError, match="foo"):
             pd.util.foo
 
 
-def get_pandas_objects(
-    module_name: str, recurse: bool
-) -> list[tuple[str, str, object]]:
-    """
-    Get all pandas objects within a module.
-
-    An object is determined to be part of pandas if it has a string
-    __module__ attribute that starts with ``"pandas"``.
-
-    Parameters
-    ----------
-    module_name : str
-        Name of the module to search.
-    recurse : bool
-        Whether to search submodules.
-
-    Returns
-    -------
-        List of all objects that are determined to be a part of pandas.
-    """
-    module = importlib.import_module(module_name)
-    objs = []
-
-    for name, obj in inspect.getmembers(module):
-        module_dunder = getattr(obj, "__module__", None)
-        if isinstance(module_dunder, str) and module_dunder.startswith("pandas"):
-            objs.append((module_name, name, obj))
-
-    if not recurse:
-        return objs
-
-    # __file__ can, but shouldn't, be None
-    assert isinstance(module.__file__, str)
-    paths = [pathlib.Path(module.__file__).parent]
-    for module_info in pkgutil.walk_packages(paths):
-        name = module_info.name
-        if name.startswith("_") or name == "internals":
-            continue
-        objs.extend(
-            get_pandas_objects(f"{module.__name__}.{name}", recurse=module_info.ispkg)
-        )
-    return objs
-
-
-@pytest.mark.slow
-@pytest.mark.parametrize(
-    "module_name",
-    [
-        "pandas",
-        "pandas.api",
-        "pandas.arrays",
-        "pandas.errors",
-        pytest.param("pandas.io", marks=pytest.mark.xfail(reason="Private imports")),
-        "pandas.plotting",
-        "pandas.testing",
-    ],
-)
-def test_attributes_module(module_name):
-    """
-    Ensures that all public objects have their __module__ set to the public import path.
-    """
-    recurse = module_name not in ["pandas", "pandas.testing"]
-    objs = get_pandas_objects(module_name, recurse=recurse)
-    failures = [
-        (module_name, name, type(obj), obj.__module__)
-        for module_name, name, obj in objs
-        if not (
-            obj.__module__ == module_name
-            # Explicit exceptions
-            or ("Dtype" in name and obj.__module__ == "pandas")
-            or (name == "Categorical" and obj.__module__ == "pandas")
-        )
-    ]
-    assert len(failures) == 0, "\n".join(str(e) for e in failures)
-
-    # Check that all objects can indeed be imported from their __module__
-    failures = []
-    for module_name, name, obj in objs:
-        module = importlib.import_module(obj.__module__)
-        try:
-            getattr(module, name)
-        except Exception:
-            failures.append((module_name, name, type(obj), obj.__module__))
-    assert len(failures) == 0, "\n".join(str(e) for e in failures)
+def test_set_module():
+    assert pd.DataFrame.__module__ == "pandas"
+    assert pd.CategoricalDtype.__module__ == "pandas"
+    assert pd.PeriodDtype.__module__ == "pandas"
+    assert pd.IntervalDtype.__module__ == "pandas"
+    assert pd.SparseDtype.__module__ == "pandas"
+    assert pd.ArrowDtype.__module__ == "pandas"
+    assert pd.Index.__module__ == "pandas"
+    assert pd.CategoricalIndex.__module__ == "pandas"
+    assert pd.DatetimeIndex.__module__ == "pandas"
+    assert pd.IntervalIndex.__module__ == "pandas"
+    assert pd.MultiIndex.__module__ == "pandas"
+    assert pd.PeriodIndex.__module__ == "pandas"
+    assert pd.RangeIndex.__module__ == "pandas"
+    assert pd.TimedeltaIndex.__module__ == "pandas"
+    assert pd.Period.__module__ == "pandas"
+    assert pd.Timestamp.__module__ == "pandas"
+    assert pd.Timedelta.__module__ == "pandas"
+    assert pd.Series.__module__ == "pandas"

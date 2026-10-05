@@ -32,17 +32,6 @@ class Dim2CompatTests:
                 # TODO: is there a less hacky way of checking this?
                 pytest.skip(f"{dtype} does not support 2D.")
 
-    def test_shift_2d(self, data):
-        # shift operates along the last axis
-        arr2d = data.repeat(2).reshape(-1, 2).T
-
-        for n in [1, -2]:
-            for fill_value in [None, data[0]]:
-                result = arr2d.shift(n, fill_value=fill_value)
-                expected_row = data.shift(n, fill_value=fill_value)
-                tm.assert_extension_array_equal(result[0, :], expected_row)
-                tm.assert_extension_array_equal(result[1, :], expected_row)
-
     def test_transpose(self, data):
         arr2d = data.repeat(2).reshape(-1, 2)
         shape = arr2d.shape
@@ -275,10 +264,14 @@ class Dim2CompatTests:
                 expected = expected.fillna(fill_value)
 
             tm.assert_extension_array_equal(result, expected)
-        elif method in ["mean", "median", "std", "var"]:
+        elif method == "median":
+            # std and var are not dtype-preserving
+            expected = data
+            tm.assert_extension_array_equal(result, expected)
+        elif method in ["mean", "std", "var"]:
             if is_integer_dtype(data) or is_bool_dtype(data):
                 data = data.astype("Float64")
-            if method in ["mean", "median"]:
+            if method == "mean":
                 tm.assert_extension_array_equal(result, data)
             else:
                 tm.assert_extension_array_equal(result, data - data)

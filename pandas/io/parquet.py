@@ -10,33 +10,29 @@ from typing import (
     Any,
     Literal,
 )
-import warnings
 from warnings import (
     catch_warnings,
     filterwarnings,
 )
 
-from pandas._config.config import _global_config as config
+from pandas._config import using_string_dtype
 
 from pandas._libs import lib
 from pandas.compat._optional import import_optional_dependency
-from pandas.errors import (
-    AbstractMethodError,
-    Pandas4Warning,
-)
-from pandas.util._decorators import set_module
-from pandas.util._exceptions import find_stack_level
+from pandas.errors import AbstractMethodError
+from pandas.util._decorators import doc
 from pandas.util._validators import check_dtype_backend
 
-from pandas import DataFrame
-
-from pandas.io._util import (
-    arrow_table_to_pandas,
-    suppress_pyarrow_values_warning,
+import pandas as pd
+from pandas import (
+    DataFrame,
+    get_option,
 )
+from pandas.core.shared_docs import _shared_docs
+
+from pandas.io._util import arrow_string_types_mapper
 from pandas.io.common import (
     IOHandles,
-    check_parent_directory,
     get_handle,
     is_fsspec_url,
     is_url,
@@ -47,7 +43,6 @@ if TYPE_CHECKING:
     from pandas._typing import (
         DtypeBackend,
         FilePath,
-        ParquetCompressionOptions,
         ReadBuffer,
         StorageOptions,
         WriteBuffer,
@@ -57,7 +52,7 @@ if TYPE_CHECKING:
 def get_engine(engine: str) -> BaseImpl:
     """return our implementation"""
     if engine == "auto":
-        engine = config["io"]["parquet"]["engine"]
+        engine = get_option("io.parquet.engine")
 
     if engine == "auto":
         # try engines in this order
@@ -83,12 +78,6 @@ def get_engine(engine: str) -> BaseImpl:
     if engine == "pyarrow":
         return PyArrowImpl()
     elif engine == "fastparquet":
-        warnings.warn(
-            "The 'fastparquet' engine is deprecated and will be removed in a "
-            "future version. Use 'pyarrow' instead.",
-            Pandas4Warning,
-            stacklevel=find_stack_level(),
-        )
         return FastParquetImpl()
 
     raise ValueError("engine must be one of 'pyarrow', 'fastparquet'")
@@ -121,32 +110,19 @@ def _get_path_or_handle(
                 f"not a {type(fs).__name__}"
             )
     if is_fsspec_url(path_or_handle) and fs is None:
-        pa_error = None
         if storage_options is None:
             pa = import_optional_dependency("pyarrow")
             pa_fs = import_optional_dependency("pyarrow.fs")
 
             try:
                 fs, path_or_handle = pa_fs.FileSystem.from_uri(path)
-            except (TypeError, pa.ArrowException):
+            except (TypeError, pa.ArrowInvalid):
                 pass
-            except OSError as err:
-                # Only "hdfs:///path" (no host) resolves differently in fsspec
-                # (GH#58078); otherwise this is a real error, e.g. no libhdfs
-                if not str(path_or_handle).startswith("hdfs:///"):
-                    raise
-                pa_error = err
         if fs is None:
-            try:
-                fsspec = import_optional_dependency("fsspec")
-                fs, path_or_handle = fsspec.core.url_to_fs(
-                    path_or_handle, **(storage_options or {})
-                )
-            except Exception as err:
-                if pa_error is None:
-                    raise
-                # keep pyarrow's error, e.g. a missing JVM
-                raise err from pa_error
+            fsspec = import_optional_dependency("fsspec")
+            fs, path_or_handle = fsspec.core.url_to_fs(
+                path_or_handle, **(storage_options or {})
+            )
     elif storage_options and (not is_url(path_or_handle) or mode != "rb"):
         # can't write to a remote url
         # without making use of fsspec at the moment
@@ -159,35 +135,14 @@ def _get_path_or_handle(
         and isinstance(path_or_handle, str)
         and not os.path.isdir(path_or_handle)
     ):
-        if is_url(path_or_handle):
-            # pyarrow cannot read non-fsspec URLs (e.g. http/https), so let
-            # get_handle download them into a buffer for pyarrow to consume.
-            handles = get_handle(
-                path_or_handle, mode, is_text=False, storage_options=storage_options
-            )
-            path_or_handle = handles.handle
-        else:
-            # Local path: keep the I/O in pyarrow's C++ layer rather than the
-            # Python one (GH#47702), and open the file only once -- adding a
-            # get_handle open on top would clobber pyarrow's data to 0 bytes
-            # (GH#65810). get_handle would also expand "~" and check the parent
-            # directory on write, so reproduce both below.
-            path_or_handle = os.path.expanduser(path_or_handle)
-            if "w" in mode or "a" in mode or "x" in mode:
-                check_parent_directory(path_or_handle)
-                # Open the destination instead of handing over its path:
-                # write_table deletes a path-like target when the write raises,
-                # destroying a pre-existing file it never managed to open
-                # (GH#69022). pa.OSFile opens it in C++ rather than through
-                # builtins.open, so this stays a single native open.
-                pa = import_optional_dependency("pyarrow")
-                stream = pa.OSFile(path_or_handle, mode)
-                handles = IOHandles(
-                    handle=stream,
-                    compression={"method": None},
-                    created_handles=[stream],
-                )
-                path_or_handle = stream
+        # use get_handle only when we are very certain that it is not a directory
+        # fsspec resources can also point to directories
+        # this branch is used for example when reading from non-fsspec URLs
+        handles = get_handle(
+            path_or_handle, mode, is_text=False, storage_options=storage_options
+        )
+        fs = None
+        path_or_handle = handles.handle
     return path_or_handle, handles, fs
 
 
@@ -220,7 +175,7 @@ class PyArrowImpl(BaseImpl):
         self,
         df: DataFrame,
         path: FilePath | WriteBuffer[bytes],
-        compression: ParquetCompressionOptions = "snappy",
+        compression: str | None = "snappy",
         index: bool | None = None,
         storage_options: StorageOptions | None = None,
         partition_cols: list[str] | None = None,
@@ -233,27 +188,13 @@ class PyArrowImpl(BaseImpl):
         if index is not None:
             from_pandas_kwargs["preserve_index"] = index
 
-        with suppress_pyarrow_values_warning():
-            table = self.api.Table.from_pandas(df, **from_pandas_kwargs)
+        table = self.api.Table.from_pandas(df, **from_pandas_kwargs)
 
         if df.attrs:
             df_metadata = {"PANDAS_ATTRS": json.dumps(df.attrs)}
             existing_metadata = table.schema.metadata
             merged_metadata = {**existing_metadata, **df_metadata}
             table = table.replace_schema_metadata(merged_metadata)
-
-        if partition_cols is None and kwargs:
-            # pyarrow opens the destination before validating kwargs, so a
-            # misspelled kwarg would clobber an existing file or be masked by
-            # an error about the path (GH#45815). Validate against a buffer,
-            # skipping kwargs that are single-use (encryption_properties on
-            # pyarrow<20) or record each write (metadata_collector).
-            self.api.parquet.write_table(
-                table.schema.empty_table(),
-                self.api.BufferOutputStream(),
-                compression=compression,
-                **{**kwargs, "metadata_collector": None, "encryption_properties": None},
-            )
 
         path_or_handle, handles, filesystem = _get_path_or_handle(
             path,
@@ -262,6 +203,16 @@ class PyArrowImpl(BaseImpl):
             mode="wb",
             is_dir=partition_cols is not None,
         )
+        if (
+            isinstance(path_or_handle, io.BufferedWriter)
+            and hasattr(path_or_handle, "name")
+            and isinstance(path_or_handle.name, (str, bytes))
+        ):
+            if isinstance(path_or_handle.name, bytes):
+                path_or_handle = path_or_handle.name.decode()
+            else:
+                path_or_handle = path_or_handle.name
+
         try:
             if partition_cols is not None:
                 # writes to multiple files under the given path
@@ -294,10 +245,20 @@ class PyArrowImpl(BaseImpl):
         dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
         storage_options: StorageOptions | None = None,
         filesystem=None,
-        to_pandas_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ) -> DataFrame:
         kwargs["use_pandas_metadata"] = True
+
+        to_pandas_kwargs = {}
+        if dtype_backend == "numpy_nullable":
+            from pandas.io._util import _arrow_dtype_mapping
+
+            mapping = _arrow_dtype_mapping()
+            to_pandas_kwargs["types_mapper"] = mapping.get
+        elif dtype_backend == "pyarrow":
+            to_pandas_kwargs["types_mapper"] = pd.ArrowDtype  # type: ignore[assignment]
+        elif using_string_dtype():
+            to_pandas_kwargs["types_mapper"] = arrow_string_types_mapper()
 
         path_or_handle, handles, filesystem = _get_path_or_handle(
             path,
@@ -313,26 +274,18 @@ class PyArrowImpl(BaseImpl):
                 filters=filters,
                 **kwargs,
             )
-
-            df_metadata = None
-            if pa_table.schema.metadata:
-                if b"PANDAS_ATTRS" in pa_table.schema.metadata:
-                    df_metadata = pa_table.schema.metadata[b"PANDAS_ATTRS"]
-
             with catch_warnings():
                 filterwarnings(
                     "ignore",
                     "make_block is deprecated",
-                    Pandas4Warning,
+                    DeprecationWarning,
                 )
-                result = arrow_table_to_pandas(
-                    pa_table,
-                    dtype_backend=dtype_backend,
-                    to_pandas_kwargs=to_pandas_kwargs,
-                )
+                result = pa_table.to_pandas(**to_pandas_kwargs)
 
-            if df_metadata is not None:
-                result.attrs = json.loads(df_metadata)
+            if pa_table.schema.metadata:
+                if b"PANDAS_ATTRS" in pa_table.schema.metadata:
+                    df_metadata = pa_table.schema.metadata[b"PANDAS_ATTRS"]
+                    result.attrs = json.loads(df_metadata)
             return result
         finally:
             if handles is not None:
@@ -408,7 +361,6 @@ class FastParquetImpl(BaseImpl):
         filters=None,
         storage_options: StorageOptions | None = None,
         filesystem=None,
-        to_pandas_kwargs: dict[str, Any] | None = None,
         **kwargs,
     ) -> DataFrame:
         parquet_kwargs: dict[str, Any] = {}
@@ -423,10 +375,6 @@ class FastParquetImpl(BaseImpl):
         if filesystem is not None:
             raise NotImplementedError(
                 "filesystem is not implemented for the fastparquet engine."
-            )
-        if to_pandas_kwargs is not None:
-            raise NotImplementedError(
-                "to_pandas_kwargs is not implemented for the fastparquet engine."
             )
         path = stringify_path(path)
         handles = None
@@ -449,7 +397,7 @@ class FastParquetImpl(BaseImpl):
                 filterwarnings(
                     "ignore",
                     "make_block is deprecated",
-                    Pandas4Warning,
+                    DeprecationWarning,
                 )
                 return parquet_file.to_pandas(
                     columns=columns, filters=filters, **kwargs
@@ -459,11 +407,12 @@ class FastParquetImpl(BaseImpl):
                 handles.close()
 
 
+@doc(storage_options=_shared_docs["storage_options"])
 def to_parquet(
     df: DataFrame,
     path: FilePath | WriteBuffer[bytes] | None = None,
-    engine: str | lib.NoDefault = lib.no_default,
-    compression: ParquetCompressionOptions = "snappy",
+    engine: str = "auto",
+    compression: str | None = "snappy",
     index: bool | None = None,
     storage_options: StorageOptions | None = None,
     partition_cols: list[str] | None = None,
@@ -478,20 +427,11 @@ def to_parquet(
     df : DataFrame
     path : str, path object, file-like object, or None, default None
         String, path object (implementing ``os.PathLike[str]``), or file-like
-        object implementing a binary ``write()`` function. If None, the result
-        is returned as bytes. If a string, it will be used as the root directory
-        path when writing a partitioned dataset. The engine fastparquet does
-        not accept file-like objects.
-
-        The string could be a URL. Valid URL schemes include http, ftp, s3,
-        gs, and file. For file URLs, a host is expected. A local file could be:
-        ``file://localhost/path/to/table.parquet``. A remote example could be:
-        ``s3://bucket/path/to/table.parquet``.
-
-        Certain URL schemes may require additional packages. For example, S3
-        URLs require the ``s3fs`` library. See
-        :ref:`install.optional_dependencies` for a full list.
-    engine : {'auto', 'pyarrow', 'fastparquet'}, default 'auto'
+        object implementing a binary ``write()`` function. If None, the result is
+        returned as bytes. If a string, it will be used as Root Directory path
+        when writing a partitioned dataset. The engine fastparquet does not
+        accept file-like objects.
+    engine : {{'auto', 'pyarrow', 'fastparquet'}}, default 'auto'
         Parquet library to use. If 'auto', then the option
         ``io.parquet.engine`` is used. The default ``io.parquet.engine``
         behavior is to try 'pyarrow', falling back to 'fastparquet' if
@@ -502,13 +442,7 @@ def to_parquet(
         (e.g. "s3://"), then the ``pyarrow.fs`` filesystem is attempted first.
         Use the filesystem keyword with an instantiated fsspec filesystem
         if you wish to use its implementation.
-
-        .. deprecated:: 3.1.0
-            The ``'fastparquet'`` and ``'auto'`` engine options are
-            deprecated. Use ``'pyarrow'`` or do not pass ``engine``
-            to use the default.
-
-    compression : {'snappy', 'gzip', 'brotli', 'lz4', 'zstd', None},
+    compression : {{'snappy', 'gzip', 'brotli', 'lz4', 'zstd', None}},
         default 'snappy'. Name of the compression to use. Use ``None``
         for no compression.
     index : bool, default None
@@ -523,27 +457,16 @@ def to_parquet(
         Column names by which to partition the dataset.
         Columns are partitioned in the order they are given.
         Must be None if path is not a string.
-    storage_options : dict, optional
-        Extra options that make sense for a particular storage connection, e.g.
-        host, port, username, password, etc. For HTTP(S) URLs the key-value
-        pairs are forwarded to ``urllib.request.Request`` as header options.
-        For other URLs (e.g. starting with "s3://", and "gcs://") the
-        key-value pairs are forwarded to ``fsspec.open``. Please see ``fsspec``
-        and ``urllib`` for more details, and for more examples on storage
-        options refer `here <https://pandas.pydata.org/docs/user_guide/io.html?
-        highlight=storage_options#reading-writing-remote-files>`_.
+    {storage_options}
+
     filesystem : fsspec or pyarrow filesystem, default None
         Filesystem object to use when reading the parquet file. Only implemented
         for ``engine="pyarrow"``.
 
         .. versionadded:: 2.1.0
 
-    **kwargs
-        Additional keyword arguments passed to the engine:
-
-        * For ``engine="pyarrow"``: passed to :func:`pyarrow.parquet.write_table`
-          or :func:`pyarrow.parquet.write_to_dataset` (when using partition_cols)
-        * For ``engine="fastparquet"``: passed to :func:`fastparquet.write`
+    kwargs
+        Additional keyword arguments passed to the engine
 
     Returns
     -------
@@ -551,16 +474,6 @@ def to_parquet(
     """
     if isinstance(partition_cols, str):
         partition_cols = [partition_cols]
-    if engine is not lib.no_default and engine == "auto":
-        warnings.warn(
-            "engine='auto' is deprecated and will be removed in a "
-            "future version. Pass engine='pyarrow' or do not pass "
-            "'engine' to use the default.",
-            Pandas4Warning,
-            stacklevel=find_stack_level(),
-        )
-    if engine is lib.no_default:
-        engine = "auto"
     impl = get_engine(engine)
 
     path_or_buf: FilePath | WriteBuffer[bytes] = io.BytesIO() if path is None else path
@@ -583,23 +496,19 @@ def to_parquet(
         return None
 
 
-@set_module("pandas")
+@doc(storage_options=_shared_docs["storage_options"])
 def read_parquet(
     path: FilePath | ReadBuffer[bytes],
-    engine: str | lib.NoDefault = lib.no_default,
+    engine: str = "auto",
     columns: list[str] | None = None,
     storage_options: StorageOptions | None = None,
     dtype_backend: DtypeBackend | lib.NoDefault = lib.no_default,
     filesystem: Any = None,
-    filters: list[tuple[Any, ...]] | list[list[tuple[Any, ...]]] | None = None,
-    to_pandas_kwargs: dict[str, Any] | None = None,
+    filters: list[tuple] | list[list[tuple]] | None = None,
     **kwargs,
 ) -> DataFrame:
     """
     Load a parquet object from the file path, returning a DataFrame.
-
-    This function requires the `pyarrow <https://arrow.apache.org/docs/python/>`_
-    library.
 
     The function automatically handles reading the data from a parquet file
     and creates a DataFrame with the appropriate structure.
@@ -612,16 +521,11 @@ def read_parquet(
         The string could be a URL. Valid URL schemes include http, ftp, s3,
         gs, and file. For file URLs, a host is expected. A local file could be:
         ``file://localhost/path/to/table.parquet``.
-
-        Certain URL schemes may require additional packages. For example, S3
-        URLs require the ``s3fs`` library. See
-        :ref:`install.optional_dependencies` for a full list.
-
         A file URL can also be a path to a directory that contains multiple
         partitioned parquet files. Both pyarrow and fastparquet support
         paths to directories as well as file URLs. A directory path could be:
         ``file://localhost/path/to/tables`` or ``s3://bucket/partition_dir``.
-    engine : {'auto', 'pyarrow', 'fastparquet'}, default 'auto'
+    engine : {{'auto', 'pyarrow', 'fastparquet'}}, default 'auto'
         Parquet library to use. If 'auto', then the option
         ``io.parquet.engine`` is used. The default ``io.parquet.engine``
         behavior is to try 'pyarrow', falling back to 'fastparquet' if
@@ -632,24 +536,13 @@ def read_parquet(
         (e.g. "s3://"), then the ``pyarrow.fs`` filesystem is attempted first.
         Use the filesystem keyword with an instantiated fsspec filesystem
         if you wish to use its implementation.
-
-        .. deprecated:: 3.1.0
-            The ``'fastparquet'`` and ``'auto'`` engine options are
-            deprecated. Use ``'pyarrow'`` or do not pass ``engine``
-            to use the default.
-
     columns : list, default=None
         If not None, only these columns will be read from the file.
-    storage_options : dict, optional
-        Extra options that make sense for a particular storage connection, e.g.
-        host, port, username, password, etc. For HTTP(S) URLs the key-value
-        pairs are forwarded to ``urllib.request.Request`` as header options.
-        For other URLs (e.g. starting with "s3://", and "gcs://") the
-        key-value pairs are forwarded to ``fsspec.open``. Please see ``fsspec``
-        and ``urllib`` for more details, and for more examples on storage
-        options refer `here <https://pandas.pydata.org/docs/user_guide/io.html?
-        highlight=storage_options#reading-writing-remote-files>`_.
-    dtype_backend : {'numpy_nullable', 'pyarrow'}
+    {storage_options}
+
+        .. versionadded:: 1.3.0
+
+    dtype_backend : {{'numpy_nullable', 'pyarrow'}}
         Back-end data type applied to the resultant :class:`DataFrame`
         (still experimental). If not specified, the default behavior
         is to not use nullable data types. If specified, the behavior
@@ -685,18 +578,8 @@ def read_parquet(
 
         .. versionadded:: 2.1.0
 
-    to_pandas_kwargs : dict | None, default None
-        Keyword arguments to pass through to :func:`pyarrow.Table.to_pandas`
-        when ``engine="pyarrow"``.
-
-        .. versionadded:: 3.0.0
-
     **kwargs
-        Additional keyword arguments passed to the engine:
-
-        * For ``engine="pyarrow"``: passed to :func:`pyarrow.parquet.read_table`
-        * For ``engine="fastparquet"``: passed to
-          :meth:`fastparquet.ParquetFile.to_pandas`
+        Any additional kwargs are passed to the engine.
 
     Returns
     -------
@@ -709,7 +592,7 @@ def read_parquet(
 
     Examples
     --------
-    >>> original_df = pd.DataFrame({"foo": range(5), "bar": range(5, 10)})
+    >>> original_df = pd.DataFrame({{"foo": range(5), "bar": range(5, 10)}})
     >>> original_df
        foo  bar
     0    0    5
@@ -757,16 +640,6 @@ def read_parquet(
     1    4    9
     """
 
-    if engine is not lib.no_default and engine == "auto":
-        warnings.warn(
-            "engine='auto' is deprecated and will be removed in a "
-            "future version. Pass engine='pyarrow' or do not pass "
-            "'engine' to use the default.",
-            Pandas4Warning,
-            stacklevel=find_stack_level(),
-        )
-    if engine is lib.no_default:
-        engine = "auto"
     impl = get_engine(engine)
     check_dtype_backend(dtype_backend)
 
@@ -777,6 +650,5 @@ def read_parquet(
         storage_options=storage_options,
         dtype_backend=dtype_backend,
         filesystem=filesystem,
-        to_pandas_kwargs=to_pandas_kwargs,
         **kwargs,
     )

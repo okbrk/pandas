@@ -7,8 +7,15 @@ from io import StringIO
 
 import pytest
 
-import pandas as pd
+from pandas import (
+    DataFrame,
+    concat,
+)
 import pandas._testing as tm
+
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Passing a BlockManager to DataFrame:DeprecationWarning"
+)
 
 
 def test_iterator(all_parsers):
@@ -57,7 +64,7 @@ baz,7,8,9
     with parser.read_csv(StringIO(data), iterator=True) as reader:
         result = list(reader)
 
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
         index=["foo", "bar", "baz"],
         columns=["A", "B", "C"],
@@ -83,12 +90,12 @@ baz,7,8,9
         result = list(reader)
 
     assert len(result) == 3
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [[1, 2, 3], [4, 5, 6], [7, 8, 9]],
         index=["foo", "bar", "baz"],
         columns=["A", "B", "C"],
     )
-    tm.assert_frame_equal(pd.concat(result), expected)
+    tm.assert_frame_equal(concat(result), expected)
 
 
 def test_nrows_iterator_without_chunksize(all_parsers):
@@ -108,7 +115,7 @@ baz,7,8,9
     with parser.read_csv(StringIO(data), iterator=True, nrows=2) as reader:
         result = reader.get_chunk()
 
-    expected = pd.DataFrame(
+    expected = DataFrame(
         [[1, 2, 3], [4, 5, 6]],
         index=["foo", "bar"],
         columns=["A", "B", "C"],
@@ -135,18 +142,19 @@ def test_iterator_skipfooter_errors(all_parsers, kwargs):
             pass
 
 
-def test_iteration_open_handle(temp_file, all_parsers):
+def test_iteration_open_handle(all_parsers):
     parser = all_parsers
     kwargs = {"header": None}
 
-    with open(temp_file, "w", encoding="utf-8") as f:
-        f.write("AAA\nBBB\nCCC\nDDD\nEEE\nFFF\nGGG")
+    with tm.ensure_clean() as path:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("AAA\nBBB\nCCC\nDDD\nEEE\nFFF\nGGG")
 
-    with open(temp_file, encoding="utf-8") as f:
-        for line in f:
-            if "CCC" in line:
-                break
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if "CCC" in line:
+                    break
 
-        result = parser.read_csv(f, **kwargs)
-        expected = pd.DataFrame({0: ["DDD", "EEE", "FFF", "GGG"]})
-        tm.assert_frame_equal(result, expected)
+            result = parser.read_csv(f, **kwargs)
+            expected = DataFrame({0: ["DDD", "EEE", "FFF", "GGG"]})
+            tm.assert_frame_equal(result, expected)

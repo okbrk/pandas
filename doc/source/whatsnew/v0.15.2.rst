@@ -98,12 +98,10 @@ API changes
 
   Now, only the categories that do effectively occur in the array are returned:
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> cat = pd.Categorical(['a', 'b', 'a'], categories=['a', 'b', 'c'])
-     >>> cat.unique()
-     ['a', 'b']
-     Categories (3, str): ['a', 'b', 'c']
+    cat = pd.Categorical(['a', 'b', 'a'], categories=['a', 'b', 'c'])
+    cat.unique()
 
 - ``Series.all`` and ``Series.any`` now support the ``level`` and ``skipna`` parameters. ``Series.all``, ``Series.any``, ``Index.all``, and ``Index.any`` no longer support the ``out`` and ``keepdims`` parameters, which existed for compatibility with ndarray. Various index types no longer support the ``all`` and ``any`` aggregation functions and will now raise ``TypeError``. (:issue:`8302`).
 
@@ -111,19 +109,15 @@ API changes
 
 - Bug in ``NDFrame``: conflicting attribute/column names now behave consistently between getting and setting. Previously, when both a column and attribute named ``y`` existed, ``data.y`` would return the attribute, while ``data.y = z`` would update the column (:issue:`8994`)
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> data = pd.DataFrame({'x': [1, 2, 3]})
-     >>> data.y = 2
-     >>> data['y'] = [2, 4, 6]
-     >>> data
-        x  y
-     0  1  2
-     1  2  4
-     2  3  6
+     data = pd.DataFrame({'x': [1, 2, 3]})
+     data.y = 2
+     data['y'] = [2, 4, 6]
+     data
 
      # this assignment was inconsistent
-     >>> data.y = 5
+     data.y = 5
 
   Old behavior:
 
@@ -137,12 +131,10 @@ API changes
 
   New behavior:
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> data.y
-     5
-     >>> data['y'].values
-     array([2, 4, 6])
+     data.y
+     data['y'].values
 
 - ``Timestamp('now')`` is now equivalent to ``Timestamp.now()`` in that it returns the local time rather than UTC. Also, ``Timestamp('today')`` is now equivalent to ``Timestamp.today()`` and both have ``tz`` as a possible argument. (:issue:`9000`)
 
@@ -166,14 +158,10 @@ API changes
 
   New behavior:
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> s = pd.Series(np.arange(3), ['a', 'b', 'c'])
-     >>> s.loc['c':'a':-1]
-     c    2
-     b    1
-     a    0
-     dtype: int64
+     s = pd.Series(np.arange(3), ['a', 'b', 'c'])
+     s.loc['c':'a':-1]
 
 
 .. _whatsnew_0152.enhancements:

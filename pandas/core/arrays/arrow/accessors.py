@@ -11,11 +11,14 @@ from typing import (
     cast,
 )
 
-from pandas.compat import HAS_PYARROW
+from pandas.compat import (
+    pa_version_under10p1,
+    pa_version_under11p0,
+)
 
 from pandas.core.dtypes.common import is_list_like
 
-if HAS_PYARROW:
+if not pa_version_under10p1:
     import pyarrow as pa
     import pyarrow.compute as pc
 
@@ -23,7 +26,6 @@ if HAS_PYARROW:
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from typing import Any
 
     from pandas import (
         DataFrame,
@@ -44,7 +46,7 @@ class ArrowAccessor(metaclass=ABCMeta):
 
     def _validate(self, data) -> None:
         dtype = data.dtype
-        if not HAS_PYARROW or not isinstance(dtype, ArrowDtype):
+        if pa_version_under10p1 or not isinstance(dtype, ArrowDtype):
             # Raise AttributeError so that inspect can handle non-struct Series.
             raise AttributeError(self._validation_msg.format(dtype=dtype))
 
@@ -55,17 +57,6 @@ class ArrowAccessor(metaclass=ABCMeta):
     @property
     def _pa_array(self):
         return self._data.array._pa_array
-
-
-def _list_element_neg(chunk: pa.Array, key: int) -> pa.Array:
-    if pa.types.is_fixed_size_list(chunk.type):
-        chunk = chunk.cast(pa.list_(chunk.type.value_type))
-    if pc.any(pc.less(pc.list_value_length(chunk), -key)).as_py():
-        raise IndexError(f"list index {key} out of range")
-    indices = pc.add(chunk.offsets[1:], key)
-    if chunk.null_count:
-        indices = pc.if_else(chunk.is_valid(), indices, None)
-    return chunk.values.take(indices)
 
 
 class ListAccessor(ArrowAccessor):
@@ -95,9 +86,6 @@ class ListAccessor(ArrowAccessor):
     def len(self) -> Series:
         """
         Return the length of each list in the Series.
-
-        Computes the number of elements in each list entry. The result is a
-        Series of integers with the same index as the original Series.
 
         Returns
         -------
@@ -129,18 +117,12 @@ class ListAccessor(ArrowAccessor):
 
         value_lengths = pc.list_value_length(self._pa_array)
         return Series(
-            value_lengths,
-            dtype=ArrowDtype(value_lengths.type),
-            index=self._data.index,
-            name=self._data.name,
+            value_lengths, dtype=ArrowDtype(value_lengths.type), index=self._data.index
         )
 
     def __getitem__(self, key: int | slice) -> Series:
         """
         Index or slice lists in the Series.
-
-        Retrieves elements at the given integer index or slice from each list
-        in the Series, returning a new Series with the selected values.
 
         Parameters
         ----------
@@ -174,52 +156,41 @@ class ListAccessor(ArrowAccessor):
         from pandas import Series
 
         if isinstance(key, int):
-            pa_array = self._pa_array
-            chunks = pa_array.chunks
-            if key < 0:
-                element = pa.chunked_array(
-                    [_list_element_neg(chunk, key) for chunk in chunks],
-                    type=pa_array.type.value_type,
-                )
-            else:
-                element = pc.list_element(pa_array, key)
+            # TODO: Support negative key but pyarrow does not allow
+            # element index to be an array.
+            # if key < 0:
+            #     key = pc.add(key, pc.list_value_length(self._pa_array))
+            element = pc.list_element(self._pa_array, key)
             return Series(
-                element,
-                dtype=ArrowDtype(element.type),
-                index=self._data.index,
-                name=self._data.name,
+                element, dtype=ArrowDtype(element.type), index=self._data.index
             )
         elif isinstance(key, slice):
+            if pa_version_under11p0:
+                raise NotImplementedError(
+                    f"List slice not supported by pyarrow {pa.__version__}."
+                )
+
             # TODO: Support negative start/stop/step, ideally this would be added
             # upstream in pyarrow.
             start, stop, step = key.start, key.stop, key.step
             if start is None:
                 # TODO: When adding negative step support
-                #  this should be set to last element of array
+                #  this should be setto last element of array
                 # when step is negative.
                 start = 0
             if step is None:
                 step = 1
             sliced = pc.list_slice(self._pa_array, start, stop, step)
-            return Series(
-                sliced,
-                dtype=ArrowDtype(sliced.type),
-                index=self._data.index,
-                name=self._data.name,
-            )
+            return Series(sliced, dtype=ArrowDtype(sliced.type), index=self._data.index)
         else:
             raise ValueError(f"key must be an int or slice, got {type(key).__name__}")
 
-    def __iter__(self) -> Iterator[Any]:
+    def __iter__(self) -> Iterator:
         raise TypeError(f"'{type(self).__name__}' object is not iterable")
 
     def flatten(self) -> Series:
         """
         Flatten list values.
-
-        Each list element is expanded into separate rows, preserving the
-        original index. The resulting Series may have a longer length than
-        the original if lists contain more than one element.
 
         Returns
         -------
@@ -252,12 +223,7 @@ class ListAccessor(ArrowAccessor):
         counts = pa.compute.list_value_length(self._pa_array)
         flattened = pa.compute.list_flatten(self._pa_array)
         index = self._data.index.repeat(counts.fill_null(pa.scalar(0, counts.type)))
-        return Series(
-            flattened,
-            dtype=ArrowDtype(flattened.type),
-            index=index,
-            name=self._data.name,
-        )
+        return Series(flattened, dtype=ArrowDtype(flattened.type), index=index)
 
 
 class StructAccessor(ArrowAccessor):
@@ -286,9 +252,6 @@ class StructAccessor(ArrowAccessor):
     def dtypes(self) -> Series:
         """
         Return the dtype object of each child field of the struct.
-
-        The returned Series is indexed by the field names of the struct and
-        contains the corresponding :class:`ArrowDtype` for each field.
 
         Returns
         -------
@@ -339,10 +302,6 @@ class StructAccessor(ArrowAccessor):
     ) -> Series:
         """
         Extract a child field of a struct as a Series.
-
-        This method accesses individual child fields of an Arrow struct
-        column by name, index, expression, or a list of those for nested
-        structs.
 
         Parameters
         ----------
@@ -465,12 +424,13 @@ class StructAccessor(ArrowAccessor):
                 # For nested input like [2, 1, 2]
                 # iteratively get the struct and field name. The last
                 # one is used for the name of the index.
-                remaining = cast(
-                    "list[int | str | bytes]", list(reversed(level_name_or_index))
-                )
+                level_name_or_index = list(reversed(level_name_or_index))
                 selected = data
-                while remaining:
-                    name_or_index = remaining.pop()
+                while level_name_or_index:
+                    # we need the cast, otherwise mypy complains about
+                    # getting ints, bytes, or str here, which isn't possible.
+                    level_name_or_index = cast(list, level_name_or_index)
+                    name_or_index = level_name_or_index.pop()
                     name = get_name(name_or_index, selected)
                     selected = selected.type.field(selected.type.get_field_index(name))
                     name = selected.name
@@ -495,9 +455,6 @@ class StructAccessor(ArrowAccessor):
     def explode(self) -> DataFrame:
         """
         Extract all child fields of a struct as a DataFrame.
-
-        Each child field of the struct becomes a column in the resulting
-        DataFrame, with column names matching the struct field names.
 
         Returns
         -------

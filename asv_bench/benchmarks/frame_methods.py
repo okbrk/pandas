@@ -4,7 +4,6 @@ import warnings
 import numpy as np
 
 from pandas import (
-    NA,
     DataFrame,
     Index,
     MultiIndex,
@@ -389,7 +388,7 @@ class Isnull:
                 np.nan,
                 None,
                 np.datetime64("NaT"),
-                np.timedelta64("NaT", "ns"),
+                np.timedelta64("NaT"),
                 0,
                 1,
                 2.0,
@@ -446,8 +445,6 @@ class Fillna:
             values[::2] = np.nan
             if dtype == "Int64":
                 values = values.round()
-                values = values.astype(object)
-                values[::2] = NA
             self.df = DataFrame(values, dtype=dtype)
         self.fill_values = self.df.iloc[self.df.first_valid_index()].to_dict()
 
@@ -520,7 +517,7 @@ class Apply:
         self.df = DataFrame(np.random.randn(1000, 100))
 
         self.s = Series(np.arange(1028.0))
-        self.df2 = DataFrame(dict.fromkeys(range(1028), self.s))
+        self.df2 = DataFrame({i: self.s for i in range(1028)})
         self.df3 = DataFrame(np.random.randn(1000, 3), columns=list("ABC"))
 
     def time_apply_user_func(self):
@@ -838,16 +835,6 @@ class Where:
 
     def time_where(self, inplace, dtype):
         self.df.where(self.mask, other=0.0, inplace=inplace)
-
-
-class WhereMisalignedCond:
-    def setup(self):
-        N = 100_000
-        self.df = DataFrame(np.random.randn(N, 10))
-        self.mask = (self.df < 0).iloc[: N // 2]
-
-    def time_where_misaligned(self):
-        self.df.where(self.mask, other=0.0)
 
 
 class FindValidIndex:

@@ -5,7 +5,7 @@ test cython .agg behavior
 import numpy as np
 import pytest
 
-from pandas.errors import Pandas4Warning
+from pandas._config import using_string_dtype
 
 from pandas.core.dtypes.common import (
     is_float_dtype,
@@ -13,6 +13,15 @@ from pandas.core.dtypes.common import (
 )
 
 import pandas as pd
+from pandas import (
+    DataFrame,
+    Index,
+    NaT,
+    Series,
+    Timedelta,
+    Timestamp,
+    bdate_range,
+)
 import pandas._testing as tm
 
 
@@ -25,7 +34,12 @@ import pandas._testing as tm
         "var",
         "sem",
         "mean",
-        "median",
+        pytest.param(
+            "median",
+            # ignore mean of empty slice
+            # and all-NaN
+            marks=[pytest.mark.filterwarnings("ignore::RuntimeWarning")],
+        ),
         "prod",
         "min",
         "max",
@@ -37,7 +51,7 @@ def test_cythonized_aggers(op_name):
         "B": ["A", "B"] * 6,
         "C": np.random.default_rng(2).standard_normal(12),
     }
-    df = pd.DataFrame(data)
+    df = DataFrame(data)
     df.loc[2:10:2, "C"] = np.nan
 
     op = lambda x: getattr(x, op_name)()
@@ -45,7 +59,7 @@ def test_cythonized_aggers(op_name):
     # single column
     grouped = df.drop(["B"], axis=1).groupby("A")
     exp = {cat: op(group["C"]) for cat, group in grouped}
-    exp = pd.DataFrame({"C": exp})
+    exp = DataFrame({"C": exp})
     exp.index.name = "A"
     result = op(grouped)
     tm.assert_frame_equal(result, exp)
@@ -55,7 +69,7 @@ def test_cythonized_aggers(op_name):
     expd = {}
     for (cat1, cat2), group in grouped:
         expd.setdefault(cat1, {})[cat2] = op(group["C"])
-    exp = pd.DataFrame(expd).T.stack()
+    exp = DataFrame(expd).T.stack()
     exp.index.names = ["A", "B"]
     exp.name = "C"
 
@@ -65,7 +79,7 @@ def test_cythonized_aggers(op_name):
 
 
 def test_cython_agg_boolean():
-    frame = pd.DataFrame(
+    frame = DataFrame(
         {
             "a": np.random.default_rng(2).integers(0, 5, 50),
             "b": np.random.default_rng(2).integers(0, 2, 50).astype("bool"),
@@ -78,8 +92,9 @@ def test_cython_agg_boolean():
     tm.assert_series_equal(result, expected)
 
 
+@pytest.mark.xfail(using_string_dtype(), reason="TODO(infer_string)")
 def test_cython_agg_nothing_to_agg():
-    frame = pd.DataFrame(
+    frame = DataFrame(
         {"a": np.random.default_rng(2).integers(0, 5, 50), "b": ["foo", "bar"] * 25}
     )
 
@@ -87,25 +102,23 @@ def test_cython_agg_nothing_to_agg():
     with pytest.raises(TypeError, match=msg):
         frame.groupby("a")["b"].mean(numeric_only=True)
 
-    frame = pd.DataFrame(
+    frame = DataFrame(
         {"a": np.random.default_rng(2).integers(0, 5, 50), "b": ["foo", "bar"] * 25}
     )
 
     result = frame[["b"]].groupby(frame["a"]).mean(numeric_only=True)
-    expected = pd.DataFrame(
-        [],
-        index=frame["a"].sort_values().drop_duplicates(),
-        columns=pd.Index([], dtype="str"),
+    expected = DataFrame(
+        [], index=frame["a"].sort_values().drop_duplicates(), columns=[]
     )
     tm.assert_frame_equal(result, expected)
 
 
 def test_cython_agg_nothing_to_agg_with_dates():
-    frame = pd.DataFrame(
+    frame = DataFrame(
         {
             "a": np.random.default_rng(2).integers(0, 5, 50),
             "b": ["foo", "bar"] * 25,
-            "dates": pd.date_range("2011-01-01", periods=50, freq="min"),
+            "dates": pd.date_range("now", periods=50, freq="min"),
         }
     )
     msg = "Cannot use numeric_only=True with SeriesGroupBy.mean and non-numeric dtypes"
@@ -115,7 +128,7 @@ def test_cython_agg_nothing_to_agg_with_dates():
 
 def test_cython_agg_return_dict():
     # GH 16741
-    df = pd.DataFrame(
+    df = DataFrame(
         {
             "A": ["foo", "bar", "foo", "bar", "foo", "bar", "foo", "foo"],
             "B": ["one", "one", "two", "three", "two", "two", "one", "three"],
@@ -125,17 +138,17 @@ def test_cython_agg_return_dict():
     )
 
     ts = df.groupby("A")["B"].agg(lambda x: x.value_counts().to_dict())
-    expected = pd.Series(
+    expected = Series(
         [{"two": 1, "one": 1, "three": 1}, {"two": 2, "one": 2, "three": 1}],
-        index=pd.Index(["bar", "foo"], name="A"),
+        index=Index(["bar", "foo"], name="A"),
         name="B",
     )
     tm.assert_series_equal(ts, expected)
 
 
 def test_cython_fail_agg():
-    dr = pd.bdate_range("1/1/2000", periods=50)
-    ts = pd.Series(["A", "B", "C", "D", "E"] * 10, dtype=object, index=dr)
+    dr = bdate_range("1/1/2000", periods=50)
+    ts = Series(["A", "B", "C", "D", "E"] * 10, dtype=object, index=dr)
 
     grouped = ts.groupby(lambda x: x.month)
     summed = grouped.sum()
@@ -158,7 +171,7 @@ def test_cython_fail_agg():
     ],
 )
 def test__cython_agg_general(op, targop):
-    df = pd.DataFrame(np.random.default_rng(2).standard_normal(1000))
+    df = DataFrame(np.random.default_rng(2).standard_normal(1000))
     labels = np.random.default_rng(2).integers(0, 50, size=1000).astype(float)
     kwargs = {"ddof": 1} if op == "var" else {}
     if op not in ["first", "last"]:
@@ -180,7 +193,7 @@ def test__cython_agg_general(op, targop):
     ],
 )
 def test_cython_agg_empty_buckets(op, targop, observed):
-    df = pd.DataFrame([11, 12, 13])
+    df = DataFrame([11, 12, 13])
     grps = range(0, 55, 5)
 
     # calling _cython_agg_general directly, instead of via the user API
@@ -196,14 +209,14 @@ def test_cython_agg_empty_buckets(op, targop, observed):
 def test_cython_agg_empty_buckets_nanops(observed):
     # GH-18869 can't call nanops on empty groups, so hardcode expected
     # for these
-    df = pd.DataFrame([11, 12, 13], columns=["a"])
+    df = DataFrame([11, 12, 13], columns=["a"])
     grps = np.arange(0, 25, 5, dtype=int)
     # add / sum
     result = df.groupby(pd.cut(df["a"], grps), observed=observed)._cython_agg_general(
         "sum", alt=None, numeric_only=True
     )
     intervals = pd.interval_range(0, 20, freq=5)
-    expected = pd.DataFrame(
+    expected = DataFrame(
         {"a": [0, 0, 36, 0]},
         index=pd.CategoricalIndex(intervals, name="a", ordered=True),
     )
@@ -216,7 +229,7 @@ def test_cython_agg_empty_buckets_nanops(observed):
     result = df.groupby(pd.cut(df["a"], grps), observed=observed)._cython_agg_general(
         "prod", alt=None, numeric_only=True
     )
-    expected = pd.DataFrame(
+    expected = DataFrame(
         {"a": [1, 1, 1716, 1]},
         index=pd.CategoricalIndex(intervals, name="a", ordered=True),
     )
@@ -228,16 +241,15 @@ def test_cython_agg_empty_buckets_nanops(observed):
 
 @pytest.mark.parametrize("op", ["first", "last", "max", "min"])
 @pytest.mark.parametrize(
-    "data",
-    [pd.Timestamp("2016-10-14 21:00:44.557"), pd.Timedelta("17088 days 21:00:44.557")],
+    "data", [Timestamp("2016-10-14 21:00:44.557"), Timedelta("17088 days 21:00:44.557")]
 )
 def test_cython_with_timestamp_and_nat(op, data):
     # https://github.com/pandas-dev/pandas/issues/19526
-    df = pd.DataFrame({"a": [0, 1], "b": [data, pd.NaT]})
-    index = pd.Index([0, 1], name="a")
+    df = DataFrame({"a": [0, 1], "b": [data, NaT]})
+    index = Index([0, 1], name="a")
 
     # We will group by a and test the cython aggregations
-    expected = pd.DataFrame({"b": [data, pd.NaT]}, index=index)
+    expected = DataFrame({"b": [data, NaT]}, index=index)
 
     result = df.groupby("a").aggregate(op)
     tm.assert_frame_equal(expected, result)
@@ -270,7 +282,7 @@ def test_cython_with_timestamp_and_nat(op, data):
 )
 def test_read_only_buffer_source_agg(agg):
     # https://github.com/pandas-dev/pandas/issues/36014
-    df = pd.DataFrame(
+    df = DataFrame(
         {
             "sepal_length": [5.1, 4.9, 4.7, 4.6, 5.0],
             "species": ["setosa", "setosa", "setosa", "setosa", "setosa"],
@@ -302,7 +314,7 @@ def test_read_only_buffer_source_agg(agg):
 def test_cython_agg_nullable_int(op_name):
     # ensure that the cython-based aggregations don't fail for nullable dtype
     # (eg https://github.com/pandas-dev/pandas/issues/37415)
-    df = pd.DataFrame(
+    df = DataFrame(
         {
             "A": ["A", "B"] * 5,
             "B": pd.array([1, 2, 3, 4, 5, 6, 7, 8, 9, pd.NA], dtype="Int64"),
@@ -315,15 +327,13 @@ def test_cython_agg_nullable_int(op_name):
         convert_integer = False
     else:
         convert_integer = True
-    msg = "The convert_integer keyword in Series.convert_dtypes is deprecated"
-    with tm.assert_produces_warning(Pandas4Warning, match=msg):
-        expected = expected.convert_dtypes(convert_integer=convert_integer)
+    expected = expected.convert_dtypes(convert_integer=convert_integer)
     tm.assert_series_equal(result, expected)
 
 
 @pytest.mark.parametrize("dtype", ["Int64", "Float64", "boolean"])
 def test_count_masked_returns_masked_dtype(dtype):
-    df = pd.DataFrame(
+    df = DataFrame(
         {
             "A": [1, 1],
             "B": pd.array([1, pd.NA], dtype=dtype),
@@ -331,8 +341,8 @@ def test_count_masked_returns_masked_dtype(dtype):
         }
     )
     result = df.groupby("A").count()
-    expected = pd.DataFrame(
-        [[1, 2]], index=pd.Index([1], name="A"), columns=["B", "C"], dtype="Int64"
+    expected = DataFrame(
+        [[1, 2]], index=Index([1], name="A"), columns=["B", "C"], dtype="Int64"
     )
     tm.assert_frame_equal(result, expected)
 
@@ -369,7 +379,7 @@ def test_cython_agg_EA_known_dtypes(data, op_name, action, with_na):
     if with_na:
         data[3] = pd.NA
 
-    df = pd.DataFrame({"key": ["a", "a", "b", "b"], "col": data})
+    df = DataFrame({"key": ["a", "a", "b", "b"], "col": data})
     grouped = df.groupby("key")
 
     if action == "always_int":

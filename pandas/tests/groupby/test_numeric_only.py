@@ -3,9 +3,15 @@ import re
 import pytest
 
 from pandas._libs import lib
-from pandas.errors import Pandas4Warning
 
 import pandas as pd
+from pandas import (
+    DataFrame,
+    Index,
+    Series,
+    Timestamp,
+    date_range,
+)
 import pandas._testing as tm
 from pandas.tests.groupby import get_groupby_method_args
 
@@ -17,17 +23,17 @@ class TestNumericOnly:
     def df(self):
         # GH3668
         # GH5724
-        df = pd.DataFrame(
+        df = DataFrame(
             {
                 "group": [1, 1, 2],
                 "int": [1, 2, 3],
                 "float": [4.0, 5.0, 6.0],
-                "string": pd.Series(["a", "b", "c"], dtype="str"),
-                "object": pd.Series(["a", "b", "c"], dtype=object),
-                "category_string": pd.Series(list("abc")).astype("category"),
+                "string": Series(["a", "b", "c"], dtype="str"),
+                "object": Series(["a", "b", "c"], dtype=object),
+                "category_string": Series(list("abc")).astype("category"),
                 "category_int": [7, 8, 9],
-                "datetime": pd.date_range("20130101", periods=3),
-                "datetimetz": pd.date_range("20130101", periods=3, tz="US/Eastern"),
+                "datetime": date_range("20130101", periods=3),
+                "datetimetz": date_range("20130101", periods=3, tz="US/Eastern"),
                 "timedelta": pd.timedelta_range("1 s", periods=3, freq="s"),
             },
             columns=[
@@ -48,25 +54,25 @@ class TestNumericOnly:
     @pytest.mark.parametrize("method", ["mean", "median"])
     def test_averages(self, df, method):
         # mean / median
-        expected_columns_numeric = pd.Index(["int", "float", "category_int"])
+        expected_columns_numeric = Index(["int", "float", "category_int"])
 
         gb = df.groupby("group")
-        expected = pd.DataFrame(
+        expected = DataFrame(
             {
                 "category_int": [7.5, 9],
                 "float": [4.5, 6.0],
                 "timedelta": [pd.Timedelta("1.5s"), pd.Timedelta("3s")],
                 "int": [1.5, 3],
                 "datetime": [
-                    pd.Timestamp("2013-01-01 12:00:00"),
-                    pd.Timestamp("2013-01-03 00:00:00"),
+                    Timestamp("2013-01-01 12:00:00"),
+                    Timestamp("2013-01-03 00:00:00"),
                 ],
                 "datetimetz": [
-                    pd.Timestamp("2013-01-01 12:00:00", tz="US/Eastern"),
-                    pd.Timestamp("2013-01-03 00:00:00", tz="US/Eastern"),
+                    Timestamp("2013-01-01 12:00:00", tz="US/Eastern"),
+                    Timestamp("2013-01-03 00:00:00", tz="US/Eastern"),
                 ],
             },
-            index=pd.Index([1, 2], name="group"),
+            index=Index([1, 2], name="group"),
             columns=[
                 "int",
                 "float",
@@ -86,7 +92,7 @@ class TestNumericOnly:
         # TODO: min, max *should* handle
         # categorical (ordered) dtype
 
-        expected_columns = pd.Index(
+        expected_columns = Index(
             [
                 "int",
                 "float",
@@ -103,7 +109,7 @@ class TestNumericOnly:
 
     @pytest.mark.parametrize("method", ["first", "last"])
     def test_first_last(self, df, method):
-        expected_columns = pd.Index(
+        expected_columns = Index(
             [
                 "int",
                 "float",
@@ -122,19 +128,19 @@ class TestNumericOnly:
 
     @pytest.mark.parametrize("method", ["sum", "cumsum"])
     def test_sum_cumsum(self, df, method):
-        expected_columns_numeric = pd.Index(["int", "float", "category_int"])
-        expected_columns = pd.Index(
+        expected_columns_numeric = Index(["int", "float", "category_int"])
+        expected_columns = Index(
             ["int", "float", "string", "category_int", "timedelta"]
         )
         if method == "cumsum":
             # cumsum loses string
-            expected_columns = pd.Index(["int", "float", "category_int", "timedelta"])
+            expected_columns = Index(["int", "float", "category_int", "timedelta"])
 
         self._check(df, method, expected_columns, expected_columns_numeric)
 
     @pytest.mark.parametrize("method", ["prod", "cumprod"])
     def test_prod_cumprod(self, df, method):
-        expected_columns = pd.Index(["int", "float", "category_int"])
+        expected_columns = Index(["int", "float", "category_int"])
         expected_columns_numeric = expected_columns
 
         self._check(df, method, expected_columns, expected_columns_numeric)
@@ -142,7 +148,7 @@ class TestNumericOnly:
     @pytest.mark.parametrize("method", ["cummin", "cummax"])
     def test_cummin_cummax(self, df, method):
         # like min, max, but don't include strings
-        expected_columns = pd.Index(
+        expected_columns = Index(
             ["int", "float", "category_int", "datetime", "datetimetz", "timedelta"]
         )
 
@@ -238,7 +244,6 @@ class TestNumericOnly:
         ("quantile", True),
         ("sem", True),
         ("skew", True),
-        ("kurt", True),
         ("std", True),
         ("sum", True),
         ("var", True),
@@ -250,7 +255,7 @@ def test_numeric_only(kernel, has_arg, numeric_only, keys):
     # GH#46072
     # drops_nuisance: Whether the op drops nuisance columns even when numeric_only=False
     # has_arg: Whether the op has a numeric_only arg
-    df = pd.DataFrame({"a1": [1, 1], "a2": [2, 2], "a3": [5, 6], "b": 2 * [object]})
+    df = DataFrame({"a1": [1, 1], "a2": [2, 2], "a3": [5, 6], "b": 2 * [object]})
 
     args = get_groupby_method_args(kernel, df)
     kwargs = {} if numeric_only is lib.no_default else {"numeric_only": numeric_only}
@@ -260,7 +265,7 @@ def test_numeric_only(kernel, has_arg, numeric_only, keys):
     if has_arg and numeric_only is True:
         # Cases where b does not appear in the result
         if kernel == "corrwith":
-            warn = Pandas4Warning
+            warn = FutureWarning
             msg = "DataFrameGroupBy.corrwith is deprecated"
         else:
             warn = None
@@ -273,11 +278,14 @@ def test_numeric_only(kernel, has_arg, numeric_only, keys):
         kernel in ("first", "last")
         or (
             # kernels that work on any dtype and don't have numeric_only arg
-            kernel in ("any", "all", "bfill", "ffill", "nth", "nunique")
+            kernel in ("any", "all", "bfill", "ffill", "fillna", "nth", "nunique")
             and numeric_only is lib.no_default
         )
     ):
-        result = method(*args, **kwargs)
+        warn = FutureWarning if kernel == "fillna" else None
+        msg = "DataFrameGroupBy.fillna is deprecated"
+        with tm.assert_produces_warning(warn, match=msg):
+            result = method(*args, **kwargs)
         assert "b" in result.columns
     elif has_arg:
         assert numeric_only is not True
@@ -305,7 +313,7 @@ def test_numeric_only(kernel, has_arg, numeric_only, keys):
             msg = "'>' not supported between instances of 'type' and 'type'"
         with pytest.raises(exception, match=msg):
             if kernel == "corrwith":
-                warn = Pandas4Warning
+                warn = FutureWarning
                 msg = "DataFrameGroupBy.corrwith is deprecated"
             else:
                 warn = None
@@ -330,7 +338,7 @@ def test_deprecate_numeric_only_series(dtype, groupby_func, request):
     # GH#46560
     grouper = [0, 0, 1]
 
-    ser = pd.Series([1, 0, 0], dtype=dtype)
+    ser = Series([1, 0, 0], dtype=dtype)
     gb = ser.groupby(grouper)
 
     if groupby_func == "corrwith":
@@ -340,7 +348,7 @@ def test_deprecate_numeric_only_series(dtype, groupby_func, request):
 
     method = getattr(gb, groupby_func)
 
-    expected_ser = pd.Series([1, 0, 0])
+    expected_ser = Series([1, 0, 0])
     expected_gb = expected_ser.groupby(grouper)
     expected_method = getattr(expected_gb, groupby_func)
 
@@ -373,7 +381,6 @@ def test_deprecate_numeric_only_series(dtype, groupby_func, request):
         "max",
         "prod",
         "skew",
-        "kurt",
     )
 
     # Test default behavior; kernels that fail may be enabled in the future but kernels
@@ -403,7 +410,6 @@ def test_deprecate_numeric_only_series(dtype, groupby_func, request):
         "quantile",
         "sem",
         "skew",
-        "kurt",
         "std",
         "sum",
         "var",
@@ -420,6 +426,7 @@ def test_deprecate_numeric_only_series(dtype, groupby_func, request):
         msg = "|".join(
             [
                 "SeriesGroupBy.sem called with numeric_only=True and dtype object",
+                "Series.skew does not allow numeric_only=True with non-numeric",
                 "cum(sum|prod|min|max) is not supported for object dtype",
                 r"Cannot use numeric_only=True with SeriesGroupBy\..* and non-numeric",
             ]

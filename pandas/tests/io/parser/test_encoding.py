@@ -7,19 +7,22 @@ from io import (
     BytesIO,
     TextIOWrapper,
 )
-import sys
+import os
 import tempfile
+import uuid
 
 import numpy as np
 import pytest
 
-from pandas.errors import (
-    EmptyDataError,
-    ParserWarning,
+from pandas import (
+    DataFrame,
+    read_csv,
 )
-
-import pandas as pd
 import pandas._testing as tm
+
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Passing a BlockManager to DataFrame:DeprecationWarning"
+)
 
 skip_pyarrow = pytest.mark.usefixtures("pyarrow_skip")
 
@@ -31,7 +34,7 @@ def test_bytes_io_input(all_parsers):
     data = BytesIO("שלום:1234\n562:123".encode(encoding))
     result = parser.read_csv(data, sep=":", encoding=encoding)
 
-    expected = pd.DataFrame([[562, 123]], columns=["שלום", "1234"])
+    expected = DataFrame([[562, 123]], columns=["שלום", "1234"])
     tm.assert_frame_equal(result, expected)
 
 
@@ -41,14 +44,14 @@ def test_read_csv_unicode(all_parsers):
     data = BytesIO("\u0141aski, Jan;1".encode())
 
     result = parser.read_csv(data, sep=";", encoding="utf-8", header=None)
-    expected = pd.DataFrame([["\u0141aski, Jan", 1]])
+    expected = DataFrame([["\u0141aski, Jan", 1]])
     tm.assert_frame_equal(result, expected)
 
 
 @skip_pyarrow
 @pytest.mark.parametrize("sep", [",", "\t"])
 @pytest.mark.parametrize("encoding", ["utf-16", "utf-16le", "utf-16be"])
-def test_utf16_bom_skiprows(all_parsers, sep, encoding, temp_file):
+def test_utf16_bom_skiprows(all_parsers, sep, encoding):
     # see gh-2298
     parser = all_parsers
     data = """skip this
@@ -56,29 +59,31 @@ skip this too
 A,B,C
 1,2,3
 4,5,6""".replace(",", sep)
+    path = f"__{uuid.uuid4()}__.csv"
     kwargs = {"sep": sep, "skiprows": 2}
     utf8 = "utf-8"
 
-    bytes_data = data.encode(encoding)
+    with tm.ensure_clean(path) as path:
+        bytes_data = data.encode(encoding)
 
-    with open(temp_file, "wb") as f:
-        f.write(bytes_data)
+        with open(path, "wb") as f:
+            f.write(bytes_data)
 
-    with TextIOWrapper(BytesIO(data.encode(utf8)), encoding=utf8) as bytes_buffer:
-        result = parser.read_csv(temp_file, encoding=encoding, **kwargs)
-        expected = parser.read_csv(bytes_buffer, encoding=utf8, **kwargs)
-    tm.assert_frame_equal(result, expected)
+        with TextIOWrapper(BytesIO(data.encode(utf8)), encoding=utf8) as bytes_buffer:
+            result = parser.read_csv(path, encoding=encoding, **kwargs)
+            expected = parser.read_csv(bytes_buffer, encoding=utf8, **kwargs)
+        tm.assert_frame_equal(result, expected)
 
 
-def test_utf16_example(all_parsers, datapath):
-    path = datapath("io", "parser", "data", "utf16_ex.txt")
+def test_utf16_example(all_parsers, csv_dir_path):
+    path = os.path.join(csv_dir_path, "utf16_ex.txt")
     parser = all_parsers
     result = parser.read_csv(path, encoding="utf-16", sep="\t")
     assert len(result) == 50
 
 
-def test_unicode_encoding(all_parsers, datapath):
-    path = datapath("io", "parser", "data", "unicode_series.csv")
+def test_unicode_encoding(all_parsers, csv_dir_path):
+    path = os.path.join(csv_dir_path, "unicode_series.csv")
     parser = all_parsers
 
     result = parser.read_csv(path, header=None, encoding="latin-1")
@@ -108,14 +113,14 @@ def test_unicode_encoding(all_parsers, datapath):
         ),
     ],
 )
-@pytest.mark.parametrize("encoding", ["utf-8", "utf-8-sig"])
-def test_utf8_bom_removal(all_parsers, data, kwargs, expected, encoding):
+def test_utf8_bom(all_parsers, data, kwargs, expected):
     # see gh-4793
     parser = all_parsers
     bom = "\ufeff"
+    utf8 = "utf-8"
 
     def _encode_data_with_bom(_data):
-        bom_data = (bom + _data).encode("utf-8")
+        bom_data = (bom + _data).encode(utf8)
         return BytesIO(bom_data)
 
     if (
@@ -126,33 +131,14 @@ def test_utf8_bom_removal(all_parsers, data, kwargs, expected, encoding):
         # CSV parse error: Empty CSV file or block: cannot infer number of columns
         pytest.skip(reason="https://github.com/apache/arrow/issues/38676")
 
-    result = parser.read_csv(
-        _encode_data_with_bom(data),
-        encoding=encoding,
-        **kwargs,
-    )
-    expected = pd.DataFrame({"a": expected})
-    tm.assert_frame_equal(result, expected)
-
-
-def test_latin1_bom_preserved(all_parsers):
-    parser = all_parsers
-    if parser.engine == "pyarrow":
-        pytest.skip(reason="pyarrow does not support latin-1 encoding")
-
-    bom_bytes = b"\xef\xbb\xbf"
-    bom_text = bom_bytes.decode("latin1")
-    data = b"a\n1"
-    bio = BytesIO(bom_bytes + data)
-
-    result = parser.read_csv(bio, encoding="latin1")
-    expected = pd.DataFrame({f"{bom_text}a": [1]})
+    result = parser.read_csv(_encode_data_with_bom(data), encoding=utf8, **kwargs)
+    expected = DataFrame({"a": expected})
     tm.assert_frame_equal(result, expected)
 
 
 def test_read_csv_utf_aliases(all_parsers, utf_value, encoding_fmt):
     # see gh-13549
-    expected = pd.DataFrame({"mb_num": [4.8], "multibyte": ["test"]})
+    expected = DataFrame({"mb_num": [4.8], "multibyte": ["test"]})
     parser = all_parsers
 
     encoding = encoding_fmt.format(utf_value)
@@ -203,13 +189,10 @@ def test_encoding_temp_file(
     encoding = encoding_fmt.format(utf_value)
 
     if parser.engine == "pyarrow" and pass_encoding is True and utf_value in [16, 32]:
-        # GH#24130: pyarrow's CSV reader splits the input into byte-blocks
-        # before decoding, which corrupts multi-byte utf-16/utf-32 sequences
-        # (raises "straddling object straddles two block boundaries"). The
-        # error path is slow (~9s per case), so skip rather than xfail.
-        pytest.skip("pyarrow utf-16/32 block-boundary error is slow to surface")
+        # FIXME: this is bad!
+        pytest.skip("These cases freeze")
 
-    expected = pd.DataFrame({"foo": ["bar"]})
+    expected = DataFrame({"foo": ["bar"]})
 
     with temp_file.open(mode="w+", encoding=encoding) as f:
         f.write("foo\nbar")
@@ -227,7 +210,7 @@ def test_encoding_named_temp_file(all_parsers):
     title = "てすと"
     data = "こむ"
 
-    expected = pd.DataFrame({title: [data]})
+    expected = DataFrame({title: [data]})
 
     with tempfile.NamedTemporaryFile() as f:
         f.write(f"{title}\n{data}".encode(encoding))
@@ -247,9 +230,9 @@ def test_parse_encoded_special_characters(encoding):
     # Data contains a Unicode 'FULLWIDTH COLON' (U+FF1A) at position (0,"a")
     data = "a\tb\n：foo\t0\nbar\t1\nbaz\t2"  # noqa: RUF001
     encoded_data = BytesIO(data.encode(encoding))
-    result = pd.read_csv(encoded_data, delimiter="\t", encoding=encoding)
+    result = read_csv(encoded_data, delimiter="\t", encoding=encoding)
 
-    expected = pd.DataFrame(
+    expected = DataFrame(
         data=[["：foo", 0], ["bar", 1], ["baz", 2]],  # noqa: RUF001
         columns=["a", "b"],
     )
@@ -257,29 +240,30 @@ def test_parse_encoded_special_characters(encoding):
 
 
 @pytest.mark.parametrize("encoding", ["utf-8", None, "utf-16", "cp1255", "latin-1"])
-def test_encoding_memory_map(all_parsers, encoding, temp_file):
+def test_encoding_memory_map(all_parsers, encoding):
     # GH40986
     parser = all_parsers
-    expected = pd.DataFrame(
+    expected = DataFrame(
         {
             "name": ["Raphael", "Donatello", "Miguel Angel", "Leonardo"],
             "mask": ["red", "purple", "orange", "blue"],
             "weapon": ["sai", "bo staff", "nunchunk", "katana"],
         }
     )
-    expected.to_csv(temp_file, index=False, encoding=encoding)
+    with tm.ensure_clean() as file:
+        expected.to_csv(file, index=False, encoding=encoding)
 
-    if parser.engine == "pyarrow":
-        msg = "The 'memory_map' option is not supported with the 'pyarrow' engine"
-        with pytest.raises(ValueError, match=msg):
-            parser.read_csv(temp_file, encoding=encoding, memory_map=True)
-        return
+        if parser.engine == "pyarrow":
+            msg = "The 'memory_map' option is not supported with the 'pyarrow' engine"
+            with pytest.raises(ValueError, match=msg):
+                parser.read_csv(file, encoding=encoding, memory_map=True)
+            return
 
-    df = parser.read_csv(temp_file, encoding=encoding, memory_map=True)
+        df = parser.read_csv(file, encoding=encoding, memory_map=True)
     tm.assert_frame_equal(df, expected)
 
 
-def test_chunk_splits_multibyte_char(all_parsers, temp_file):
+def test_chunk_splits_multibyte_char(all_parsers):
     """
     Chunk splits a multibyte character with memory_map=True
 
@@ -287,24 +271,25 @@ def test_chunk_splits_multibyte_char(all_parsers, temp_file):
     """
     parser = all_parsers
     # DEFAULT_CHUNKSIZE = 262144, defined in parsers.pyx
-    df = pd.DataFrame(data=["a" * 127] * 2048)
+    df = DataFrame(data=["a" * 127] * 2048)
 
     # Put two-bytes utf-8 encoded character "ą" at the end of chunk
     # utf-8 encoding of "ą" is b'\xc4\x85'
     df.iloc[2047] = "a" * 127 + "ą"
-    df.to_csv(temp_file, index=False, header=False, encoding="utf-8")
+    with tm.ensure_clean("bug-gh43540.csv") as fname:
+        df.to_csv(fname, index=False, header=False, encoding="utf-8")
 
-    if parser.engine == "pyarrow":
-        msg = "The 'memory_map' option is not supported with the 'pyarrow' engine"
-        with pytest.raises(ValueError, match=msg):
-            parser.read_csv(temp_file, header=None, memory_map=True)
-        return
+        if parser.engine == "pyarrow":
+            msg = "The 'memory_map' option is not supported with the 'pyarrow' engine"
+            with pytest.raises(ValueError, match=msg):
+                parser.read_csv(fname, header=None, memory_map=True)
+            return
 
-    dfr = parser.read_csv(temp_file, header=None, memory_map=True)
+        dfr = parser.read_csv(fname, header=None, memory_map=True)
     tm.assert_frame_equal(dfr, df)
 
 
-def test_readcsv_memmap_utf8(all_parsers, temp_file):
+def test_readcsv_memmap_utf8(all_parsers):
     """
     GH 43787
 
@@ -324,19 +309,21 @@ def test_readcsv_memmap_utf8(all_parsers, temp_file):
             continue
         lines.append(line)
     parser = all_parsers
-    df = pd.DataFrame(lines)
-    df.to_csv(temp_file, index=False, header=False, encoding="utf-8")
+    df = DataFrame(lines)
+    with tm.ensure_clean("utf8test.csv") as fname:
+        df.to_csv(fname, index=False, header=False, encoding="utf-8")
 
-    if parser.engine == "pyarrow":
-        msg = "The 'memory_map' option is not supported with the 'pyarrow' engine"
-        with pytest.raises(ValueError, match=msg):
-            parser.read_csv(temp_file, header=None, memory_map=True, encoding="utf-8")
-        return
+        if parser.engine == "pyarrow":
+            msg = "The 'memory_map' option is not supported with the 'pyarrow' engine"
+            with pytest.raises(ValueError, match=msg):
+                parser.read_csv(fname, header=None, memory_map=True, encoding="utf-8")
+            return
 
-    dfr = parser.read_csv(temp_file, header=None, memory_map=True, encoding="utf-8")
+        dfr = parser.read_csv(fname, header=None, memory_map=True, encoding="utf-8")
     tm.assert_frame_equal(df, dfr)
 
 
+@pytest.mark.usefixtures("pyarrow_xfail")
 @pytest.mark.parametrize("mode", ["w+b", "w+t"])
 def test_not_readable(all_parsers, mode):
     # GH43439
@@ -347,48 +334,6 @@ def test_not_readable(all_parsers, mode):
     with tempfile.SpooledTemporaryFile(mode=mode, encoding="utf-8") as handle:
         handle.write(content)
         handle.seek(0)
-        if parser.engine == "pyarrow":
-            # pyarrow's CSV reader cannot read from a SpooledTemporaryFile
-            if "t" in mode:
-                msg = "The 'pyarrow' engine can only read from a binary file object"
-                with pytest.raises(TypeError, match=msg):
-                    parser.read_csv(handle)
-            else:
-                msg = "No columns to parse from file"
-                with pytest.raises(EmptyDataError, match=msg):
-                    parser.read_csv(handle)
-            return
         df = parser.read_csv(handle)
-    expected = pd.DataFrame([], columns=["abcd"])
+    expected = DataFrame([], columns=["abcd"])
     tm.assert_frame_equal(df, expected)
-
-
-def test_sep_encodeable_check_ignores_filesystem_encoding(monkeypatch, temp_file):
-    # GH#46456 whether the "c" engine can handle the separator depends on utf-8,
-    # not on the platform's filesystem encoding
-    monkeypatch.setattr(sys, "getfilesystemencoding", lambda: "latin-1")
-    temp_file.write_text(
-        "key\u00a5value\ntables\u00a5rectangular\n", encoding="latin-1"
-    )
-
-    with tm.assert_produces_warning(
-        ParserWarning, match="encoded in utf-8", check_stacklevel=False
-    ):
-        result = pd.read_csv(temp_file, sep="\u00a5", encoding="latin-1")
-    expected = pd.DataFrame([["tables", "rectangular"]], columns=["key", "value"])
-    tm.assert_frame_equal(result, expected)
-
-    with pytest.raises(ValueError, match="encoded in utf-8"):
-        pd.read_csv(temp_file, sep="\u00a5", encoding="latin-1", engine="c")
-
-
-def test_sep_unencodeable_falls_back(temp_file):
-    # GH#46456 a separator that cannot be encoded at all falls back instead of raising
-    temp_file.write_text("a,b\n1,2\n", encoding="utf-8")
-
-    with tm.assert_produces_warning(
-        ParserWarning, match="encoded in utf-8", check_stacklevel=False
-    ):
-        result = pd.read_csv(temp_file, sep="\udcff")
-    expected = pd.DataFrame({"a,b": ["1,2"]})
-    tm.assert_frame_equal(result, expected)

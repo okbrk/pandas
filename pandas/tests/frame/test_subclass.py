@@ -2,7 +2,17 @@ import numpy as np
 import pytest
 
 import pandas as pd
+from pandas import (
+    DataFrame,
+    Index,
+    MultiIndex,
+    Series,
+)
 import pandas._testing as tm
+
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Passing a BlockManager|Passing a SingleBlockManager:DeprecationWarning"
+)
 
 
 class TestDataFrameSubclassing:
@@ -21,7 +31,7 @@ class TestDataFrameSubclassing:
         # Subclass frame and ensure it returns the right class on slicing it
         # In reference to PR 9632
 
-        class CustomSeries(pd.Series):
+        class CustomSeries(Series):
             @property
             def _constructor(self):
                 return CustomSeries
@@ -29,7 +39,7 @@ class TestDataFrameSubclassing:
             def custom_series_function(self):
                 return "OK"
 
-        class CustomDataFrame(pd.DataFrame):
+        class CustomDataFrame(DataFrame):
             """
             Subclasses pandas DF, fills DF with simulation results, adds some
             custom plotting functions.
@@ -64,15 +74,15 @@ class TestDataFrameSubclassing:
         assert cdf_rows.custom_frame_function() == "OK"
 
         # Make sure sliced part of multi-index frame is custom class
-        mcol = pd.MultiIndex.from_tuples([("A", "A"), ("A", "B")])
+        mcol = MultiIndex.from_tuples([("A", "A"), ("A", "B")])
         cdf_multi = CustomDataFrame([[0, 1], [2, 3]], columns=mcol)
         assert isinstance(cdf_multi["A"], CustomDataFrame)
 
-        mcol = pd.MultiIndex.from_tuples([("A", ""), ("B", "")])
+        mcol = MultiIndex.from_tuples([("A", ""), ("B", "")])
         cdf_multi2 = CustomDataFrame([[0, 1], [2, 3]], columns=mcol)
         assert isinstance(cdf_multi2["A"], CustomSeries)
 
-    def test_dataframe_metadata(self, temp_file):
+    def test_dataframe_metadata(self):
         df = tm.SubclassedDataFrame(
             {"X": [1, 2, 3], "Y": [1, 2, 3]}, index=["a", "b", "c"]
         )
@@ -87,7 +97,7 @@ class TestDataFrameSubclassing:
         assert df.iloc[0:1, :].testattr == "XXX"
 
         # see gh-10553
-        unpickled = tm.round_trip_pickle(df, temp_file)
+        unpickled = tm.round_trip_pickle(df)
         tm.assert_frame_equal(df, unpickled)
         assert df._metadata == unpickled._metadata
         assert df.testattr == unpickled.testattr
@@ -129,7 +139,7 @@ class TestDataFrameSubclassing:
 
     def test_subclass_attr_err_propagation(self):
         # GH 11808
-        class A(pd.DataFrame):
+        class A(DataFrame):
             @property
             def nonexistence(self):
                 return self.i_dont_exist
@@ -220,11 +230,11 @@ class TestDataFrameSubclassing:
         # GH 15564
         df = tm.SubclassedDataFrame(
             [[10, 11, 12, 13], [20, 21, 22, 23], [30, 31, 32, 33], [40, 41, 42, 43]],
-            index=pd.MultiIndex.from_tuples(
-                list(zip(list("AABB"), list("cdcd"), strict=True)), names=["aaa", "ccc"]
+            index=MultiIndex.from_tuples(
+                list(zip(list("AABB"), list("cdcd"))), names=["aaa", "ccc"]
             ),
-            columns=pd.MultiIndex.from_tuples(
-                list(zip(list("WWXX"), list("yzyz"), strict=True)), names=["www", "yyy"]
+            columns=MultiIndex.from_tuples(
+                list(zip(list("WWXX"), list("yzyz"))), names=["www", "yyy"]
             ),
         )
 
@@ -239,18 +249,11 @@ class TestDataFrameSubclassing:
                 [40, 42],
                 [41, 43],
             ],
-            index=pd.MultiIndex.from_tuples(
-                list(
-                    zip(
-                        list("AAAABBBB"),
-                        list("ccddccdd"),
-                        list("yzyzyzyz"),
-                        strict=True,
-                    )
-                ),
+            index=MultiIndex.from_tuples(
+                list(zip(list("AAAABBBB"), list("ccddccdd"), list("yzyzyzyz"))),
                 names=["aaa", "ccc", "yyy"],
             ),
-            columns=pd.Index(["W", "X"], name="www"),
+            columns=Index(["W", "X"], name="www"),
         )
 
         res = df.stack()
@@ -270,18 +273,11 @@ class TestDataFrameSubclassing:
                 [40, 41],
                 [42, 43],
             ],
-            index=pd.MultiIndex.from_tuples(
-                list(
-                    zip(
-                        list("AAAABBBB"),
-                        list("ccddccdd"),
-                        list("WXWXWXWX"),
-                        strict=True,
-                    )
-                ),
+            index=MultiIndex.from_tuples(
+                list(zip(list("AAAABBBB"), list("ccddccdd"), list("WXWXWXWX"))),
                 names=["aaa", "ccc", "www"],
             ),
-            columns=pd.Index(["y", "z"], name="yyy"),
+            columns=Index(["y", "z"], name="yyy"),
         )
 
         res = df.stack("www")
@@ -296,11 +292,11 @@ class TestDataFrameSubclassing:
                 [30, 31, 32.0, 33.0],
                 [40, 41, 42.0, 43.0],
             ],
-            index=pd.MultiIndex.from_tuples(
-                list(zip(list("AABB"), list("cdcd"), strict=True)), names=["aaa", "ccc"]
+            index=MultiIndex.from_tuples(
+                list(zip(list("AABB"), list("cdcd"))), names=["aaa", "ccc"]
             ),
-            columns=pd.MultiIndex.from_tuples(
-                list(zip(list("WWXX"), list("yzyz"), strict=True)), names=["www", "yyy"]
+            columns=MultiIndex.from_tuples(
+                list(zip(list("WWXX"), list("yzyz"))), names=["www", "yyy"]
             ),
         )
 
@@ -315,18 +311,11 @@ class TestDataFrameSubclassing:
                 [40, 42.0],
                 [41, 43.0],
             ],
-            index=pd.MultiIndex.from_tuples(
-                list(
-                    zip(
-                        list("AAAABBBB"),
-                        list("ccddccdd"),
-                        list("yzyzyzyz"),
-                        strict=True,
-                    )
-                ),
+            index=MultiIndex.from_tuples(
+                list(zip(list("AAAABBBB"), list("ccddccdd"), list("yzyzyzyz"))),
                 names=["aaa", "ccc", "yyy"],
             ),
-            columns=pd.Index(["W", "X"], name="www"),
+            columns=Index(["W", "X"], name="www"),
         )
 
         res = df.stack()
@@ -346,18 +335,11 @@ class TestDataFrameSubclassing:
                 [40.0, 41.0],
                 [42.0, 43.0],
             ],
-            index=pd.MultiIndex.from_tuples(
-                list(
-                    zip(
-                        list("AAAABBBB"),
-                        list("ccddccdd"),
-                        list("WXWXWXWX"),
-                        strict=True,
-                    )
-                ),
+            index=MultiIndex.from_tuples(
+                list(zip(list("AAAABBBB"), list("ccddccdd"), list("WXWXWXWX"))),
                 names=["aaa", "ccc", "www"],
             ),
-            columns=pd.Index(["y", "z"], name="yyy"),
+            columns=Index(["y", "z"], name="yyy"),
         )
 
         res = df.stack("www")
@@ -382,26 +364,19 @@ class TestDataFrameSubclassing:
         # GH 15564
         df = tm.SubclassedDataFrame(
             [[10, 11, 12, 13], [20, 21, 22, 23], [30, 31, 32, 33], [40, 41, 42, 43]],
-            index=pd.MultiIndex.from_tuples(
-                list(zip(list("AABB"), list("cdcd"), strict=True)), names=["aaa", "ccc"]
+            index=MultiIndex.from_tuples(
+                list(zip(list("AABB"), list("cdcd"))), names=["aaa", "ccc"]
             ),
-            columns=pd.MultiIndex.from_tuples(
-                list(zip(list("WWXX"), list("yzyz"), strict=True)), names=["www", "yyy"]
+            columns=MultiIndex.from_tuples(
+                list(zip(list("WWXX"), list("yzyz"))), names=["www", "yyy"]
             ),
         )
 
         exp = tm.SubclassedDataFrame(
             [[10, 20, 11, 21, 12, 22, 13, 23], [30, 40, 31, 41, 32, 42, 33, 43]],
-            index=pd.Index(["A", "B"], name="aaa"),
-            columns=pd.MultiIndex.from_tuples(
-                list(
-                    zip(
-                        list("WWWWXXXX"),
-                        list("yyzzyyzz"),
-                        list("cdcdcdcd"),
-                        strict=True,
-                    )
-                ),
+            index=Index(["A", "B"], name="aaa"),
+            columns=MultiIndex.from_tuples(
+                list(zip(list("WWWWXXXX"), list("yyzzyyzz"), list("cdcdcdcd"))),
                 names=["www", "yyy", "ccc"],
             ),
         )
@@ -414,16 +389,9 @@ class TestDataFrameSubclassing:
 
         exp = tm.SubclassedDataFrame(
             [[10, 30, 11, 31, 12, 32, 13, 33], [20, 40, 21, 41, 22, 42, 23, 43]],
-            index=pd.Index(["c", "d"], name="ccc"),
-            columns=pd.MultiIndex.from_tuples(
-                list(
-                    zip(
-                        list("WWWWXXXX"),
-                        list("yyzzyyzz"),
-                        list("ABABABAB"),
-                        strict=True,
-                    )
-                ),
+            index=Index(["c", "d"], name="ccc"),
+            columns=MultiIndex.from_tuples(
+                list(zip(list("WWWWXXXX"), list("yyzzyyzz"), list("ABABABAB"))),
                 names=["www", "yyy", "aaa"],
             ),
         )
@@ -440,11 +408,11 @@ class TestDataFrameSubclassing:
                 [30, 31, 32.0, 33.0],
                 [40, 41, 42.0, 43.0],
             ],
-            index=pd.MultiIndex.from_tuples(
-                list(zip(list("AABB"), list("cdcd"), strict=True)), names=["aaa", "ccc"]
+            index=MultiIndex.from_tuples(
+                list(zip(list("AABB"), list("cdcd"))), names=["aaa", "ccc"]
             ),
-            columns=pd.MultiIndex.from_tuples(
-                list(zip(list("WWXX"), list("yzyz"), strict=True)), names=["www", "yyy"]
+            columns=MultiIndex.from_tuples(
+                list(zip(list("WWXX"), list("yzyz"))), names=["www", "yyy"]
             ),
         )
 
@@ -453,16 +421,9 @@ class TestDataFrameSubclassing:
                 [10, 20, 11, 21, 12.0, 22.0, 13.0, 23.0],
                 [30, 40, 31, 41, 32.0, 42.0, 33.0, 43.0],
             ],
-            index=pd.Index(["A", "B"], name="aaa"),
-            columns=pd.MultiIndex.from_tuples(
-                list(
-                    zip(
-                        list("WWWWXXXX"),
-                        list("yyzzyyzz"),
-                        list("cdcdcdcd"),
-                        strict=True,
-                    )
-                ),
+            index=Index(["A", "B"], name="aaa"),
+            columns=MultiIndex.from_tuples(
+                list(zip(list("WWWWXXXX"), list("yyzzyyzz"), list("cdcdcdcd"))),
                 names=["www", "yyy", "ccc"],
             ),
         )
@@ -478,16 +439,9 @@ class TestDataFrameSubclassing:
                 [10, 30, 11, 31, 12.0, 32.0, 13.0, 33.0],
                 [20, 40, 21, 41, 22.0, 42.0, 23.0, 43.0],
             ],
-            index=pd.Index(["c", "d"], name="ccc"),
-            columns=pd.MultiIndex.from_tuples(
-                list(
-                    zip(
-                        list("WWWWXXXX"),
-                        list("yyzzyyzz"),
-                        list("ABABABAB"),
-                        strict=True,
-                    )
-                ),
+            index=Index(["c", "d"], name="ccc"),
+            columns=MultiIndex.from_tuples(
+                list(zip(list("WWWWXXXX"), list("yyzzyyzz"), list("ABABABAB"))),
                 names=["www", "yyy", "aaa"],
             ),
         )
@@ -553,7 +507,7 @@ class TestDataFrameSubclassing:
                 "A1980": {0: "d", 1: "e", 2: "f"},
                 "B1970": {0: 2.5, 1: 1.2, 2: 0.7},
                 "B1980": {0: 3.2, 1: 1.3, 2: 0.1},
-                "X": dict(zip(range(3), x, strict=True)),
+                "X": dict(zip(range(3), x)),
             }
         )
 
@@ -649,11 +603,11 @@ class TestDataFrameSubclassing:
 
         df = tm.SubclassedDataFrame(
             [[10, 11, 12, 13], [20, 21, 22, 23], [30, 31, 32, 33], [40, 41, 42, 43]],
-            index=pd.MultiIndex.from_tuples(
-                list(zip(list("AABB"), list("cdcd"), strict=True)), names=["aaa", "ccc"]
+            index=MultiIndex.from_tuples(
+                list(zip(list("AABB"), list("cdcd"))), names=["aaa", "ccc"]
             ),
-            columns=pd.MultiIndex.from_tuples(
-                list(zip(list("WWXX"), list("yzyz"), strict=True)), names=["www", "yyy"]
+            columns=MultiIndex.from_tuples(
+                list(zip(list("WWXX"), list("yzyz"))), names=["www", "yyy"]
             ),
         )
         result = df.count()
@@ -764,7 +718,7 @@ class TestDataFrameSubclassing:
         assert isinstance(result, tm.SubclassedDataFrame)
 
     def test_convert_dtypes_preserves_subclass_with_constructor(self):
-        class SubclassedDataFrame(pd.DataFrame):
+        class SubclassedDataFrame(DataFrame):
             @property
             def _constructor(self):
                 return SubclassedDataFrame
@@ -783,13 +737,13 @@ class TestDataFrameSubclassing:
     def test_equals_subclass(self):
         # https://github.com/pandas-dev/pandas/pull/34402
         # allow subclass in both directions
-        df1 = pd.DataFrame({"a": [1, 2, 3]})
+        df1 = DataFrame({"a": [1, 2, 3]})
         df2 = tm.SubclassedDataFrame({"a": [1, 2, 3]})
         assert df1.equals(df2)
         assert df2.equals(df1)
 
 
-class MySubclassWithMetadata(pd.DataFrame):
+class MySubclassWithMetadata(DataFrame):
     _metadata = ["my_metadata"]
 
     def __init__(self, *args, **kwargs) -> None:
@@ -815,49 +769,42 @@ def test_constructor_with_metadata():
     assert isinstance(subset, MySubclassWithMetadata)
 
 
-def test_constructor_with_metadata_from_records():
-    # GH#57008
-    df = MySubclassWithMetadata.from_records([{"a": 1, "b": 2}])
-    assert df.my_metadata is None
-    assert type(df) is MySubclassWithMetadata
-
-
-class SimpleDataFrameSubClass(pd.DataFrame):
+class SimpleDataFrameSubClass(DataFrame):
     """A subclass of DataFrame that does not define a constructor."""
 
 
-class SimpleSeriesSubClass(pd.Series):
+class SimpleSeriesSubClass(Series):
     """A subclass of Series that does not define a constructor."""
 
 
 class TestSubclassWithoutConstructor:
     def test_copy_df(self):
-        expected = pd.DataFrame({"a": [1, 2, 3]})
+        expected = DataFrame({"a": [1, 2, 3]})
         result = SimpleDataFrameSubClass(expected).copy()
 
         assert (
-            type(result) is pd.DataFrame
+            type(result) is DataFrame
         )  # assert_frame_equal only checks isinstance(lhs, type(rhs))
         tm.assert_frame_equal(result, expected)
 
     def test_copy_series(self):
-        expected = pd.Series([1, 2, 3])
+        expected = Series([1, 2, 3])
         result = SimpleSeriesSubClass(expected).copy()
 
         tm.assert_series_equal(result, expected)
 
     def test_series_to_frame(self):
-        orig = pd.Series([1, 2, 3])
+        orig = Series([1, 2, 3])
         expected = orig.to_frame()
         result = SimpleSeriesSubClass(orig).to_frame()
 
         assert (
-            type(result) is pd.DataFrame
+            type(result) is DataFrame
         )  # assert_frame_equal only checks isinstance(lhs, type(rhs))
         tm.assert_frame_equal(result, expected)
 
     def test_groupby(self):
-        df = SimpleDataFrameSubClass(pd.DataFrame({"a": [1, 2, 3]}))
+        df = SimpleDataFrameSubClass(DataFrame({"a": [1, 2, 3]}))
 
         for _, v in df.groupby("a"):
-            assert type(v) is pd.DataFrame
+            assert type(v) is DataFrame

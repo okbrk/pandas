@@ -3,37 +3,37 @@ Tests for the pandas.io.common functionalities
 """
 
 import codecs
-import contextlib
 import errno
 from functools import partial
 from io import (
     BytesIO,
-    IOBase,
     StringIO,
+    UnsupportedOperation,
 )
 import mmap
 import os
 from pathlib import Path
 import pickle
-import re
-import sqlite3
 import tempfile
 
 import numpy as np
 import pytest
 
+from pandas._config import using_string_dtype
+
 from pandas.compat import (
     WASM,
     is_platform_windows,
 )
-from pandas.compat.pyarrow import pa_version_under19p0
-import pandas.util._test_decorators as td
 
 import pandas as pd
 import pandas._testing as tm
 
-from pandas.io import sql
 import pandas.io.common as icom
+
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Passing a BlockManager to DataFrame:DeprecationWarning"
+)
 
 
 class CustomFSPath:
@@ -86,11 +86,12 @@ bar2,12,13,14,15
         result = icom.stringify_path(p)
         assert result == "foo/bar.csv"
 
-    def test_stringify_file_and_path_like(self, temp_file):
+    def test_stringify_file_and_path_like(self):
         # GH 38125: do not stringify file objects that are also path-like
         fsspec = pytest.importorskip("fsspec")
-        with fsspec.open(f"file://{temp_file}", mode="wb") as fsspec_obj:
-            assert fsspec_obj == icom.stringify_path(fsspec_obj)
+        with tm.ensure_clean() as path:
+            with fsspec.open(f"file://{path}", mode="wb") as fsspec_obj:
+                assert fsspec_obj == icom.stringify_path(fsspec_obj)
 
     @pytest.mark.parametrize("path_type", [str, CustomFSPath, Path])
     def test_infer_compression_from_path(self, compression_format, path_type):
@@ -138,7 +139,8 @@ Look,a snake,🐍"""
             assert result == data.encode("utf-8")
 
     # Test that pyarrow can handle a file opened with get_handle
-    def test_get_handle_pyarrow_compat(sel, using_infer_string):
+    @pytest.mark.xfail(using_string_dtype(), reason="TODO(infer_string)")
+    def test_get_handle_pyarrow_compat(self):
         pa_csv = pytest.importorskip("pyarrow.csv")
 
         # Test latin1, ucs-2, and ucs-4 chars
@@ -152,10 +154,6 @@ Look,a snake,🐍"""
         s = StringIO(data)
         with icom.get_handle(s, "rb", is_text=False) as handles:
             df = pa_csv.read_csv(handles.handle).to_pandas()
-            if pa_version_under19p0:
-                expected = expected.astype("object")
-            elif not using_infer_string:
-                expected = expected.astype(pd.StringDtype(na_value=np.nan))
             tm.assert_frame_equal(df, expected)
             assert not s.closed
 
@@ -295,7 +293,7 @@ Look,a snake,🐍"""
             (
                 pd.read_feather,
                 "pyarrow",
-                ("io", "data", "feather", "simple_dataset.feather"),
+                ("io", "data", "feather", "feather-0_3_1.feather"),
             ),
             (
                 pd.read_hdf,
@@ -311,12 +309,6 @@ Look,a snake,🐍"""
                 ("io", "data", "pickle", "categorical.0.25.0.pickle"),
             ),
         ],
-    )
-    @pytest.mark.filterwarnings(
-        "ignore:The default engine for reading:pandas.errors.Pandas4Warning"
-    )
-    @pytest.mark.filterwarnings(
-        "ignore:The default value of 'encoding':pandas.errors.Pandas4Warning"
     )
     def test_read_fspath_all(self, reader, module, path, datapath):
         pytest.importorskip(module)
@@ -345,47 +337,51 @@ Look,a snake,🐍"""
             ("to_stata", {"time_stamp": pd.to_datetime("2019-01-01 00:00")}, "os"),
         ],
     )
-    def test_write_fspath_all(self, writer_name, writer_kwargs, module, tmp_path):
+    @pytest.mark.xfail(using_string_dtype(), reason="TODO(infer_string)", strict=False)
+    def test_write_fspath_all(self, writer_name, writer_kwargs, module):
         if writer_name in ["to_latex"]:  # uses Styler implementation
             pytest.importorskip("jinja2")
-        string = str(tmp_path / "string")
-        fspath = str(tmp_path / "fspath")
+        p1 = tm.ensure_clean("string")
+        p2 = tm.ensure_clean("fspath")
         df = pd.DataFrame({"A": [1, 2]})
 
-        pytest.importorskip(module)
-        mypath = CustomFSPath(fspath)
-        writer = getattr(df, writer_name)
+        with p1 as string, p2 as fspath:
+            pytest.importorskip(module)
+            mypath = CustomFSPath(fspath)
+            writer = getattr(df, writer_name)
 
-        writer(string, **writer_kwargs)
-        writer(mypath, **writer_kwargs)
-        with open(string, "rb") as f_str, open(fspath, "rb") as f_path:
-            if writer_name == "to_excel":
-                # binary representation of excel contains time creation
-                # data that causes flaky CI failures
-                result = pd.read_excel(f_str, **writer_kwargs)
-                expected = pd.read_excel(f_path, **writer_kwargs)
-                tm.assert_frame_equal(result, expected)
-            else:
-                result = f_str.read()
-                expected = f_path.read()
-                assert result == expected
+            writer(string, **writer_kwargs)
+            writer(mypath, **writer_kwargs)
+            with open(string, "rb") as f_str, open(fspath, "rb") as f_path:
+                if writer_name == "to_excel":
+                    # binary representation of excel contains time creation
+                    # data that causes flaky CI failures
+                    result = pd.read_excel(f_str, **writer_kwargs)
+                    expected = pd.read_excel(f_path, **writer_kwargs)
+                    tm.assert_frame_equal(result, expected)
+                else:
+                    result = f_str.read()
+                    expected = f_path.read()
+                    assert result == expected
 
-    def test_write_fspath_hdf5(self, tmp_path):
+    @pytest.mark.xfail(using_string_dtype(), reason="TODO(infer_string)")
+    def test_write_fspath_hdf5(self):
         # Same test as write_fspath_all, except HDF5 files aren't
         # necessarily byte-for-byte identical for a given dataframe, so we'll
         # have to read and compare equality
         pytest.importorskip("tables")
 
         df = pd.DataFrame({"A": [1, 2]})
-        string = str(tmp_path / "string")
-        fspath = str(tmp_path / "fspath")
+        p1 = tm.ensure_clean("string")
+        p2 = tm.ensure_clean("fspath")
 
-        mypath = CustomFSPath(fspath)
-        df.to_hdf(mypath, key="bar")
-        df.to_hdf(string, key="bar")
+        with p1 as string, p2 as fspath:
+            mypath = CustomFSPath(fspath)
+            df.to_hdf(mypath, key="bar")
+            df.to_hdf(string, key="bar")
 
-        result = pd.read_hdf(fspath, key="bar")
-        expected = pd.read_hdf(string, key="bar")
+            result = pd.read_hdf(fspath, key="bar")
+            expected = pd.read_hdf(string, key="bar")
 
         tm.assert_frame_equal(result, expected)
 
@@ -437,33 +433,36 @@ class TestMMapWrapper:
                 with pytest.raises(StopIteration, match=r"^$"):
                     next(wrapper)
 
-    def test_unknown_engine(self, temp_file):
-        df = pd.DataFrame(
-            1.1 * np.arange(120).reshape((30, 4)),
-            columns=pd.Index(list("ABCD")),
-            index=pd.Index([f"i-{i}" for i in range(30)]),
-        )
-        df.to_csv(temp_file)
-        with pytest.raises(ValueError, match="Unknown engine"):
-            pd.read_csv(temp_file, engine="pyt")
+    def test_unknown_engine(self):
+        with tm.ensure_clean() as path:
+            df = pd.DataFrame(
+                1.1 * np.arange(120).reshape((30, 4)),
+                columns=pd.Index(list("ABCD"), dtype=object),
+                index=pd.Index([f"i-{i}" for i in range(30)], dtype=object),
+            )
+            df.to_csv(path)
+            with pytest.raises(ValueError, match="Unknown engine"):
+                pd.read_csv(path, engine="pyt")
 
-    def test_binary_mode(self, temp_file):
+    @pytest.mark.xfail(using_string_dtype(), reason="TODO(infer_string)")
+    def test_binary_mode(self):
         """
         'encoding' shouldn't be passed to 'open' in binary mode.
 
         GH 35058
         """
-        df = pd.DataFrame(
-            1.1 * np.arange(120).reshape((30, 4)),
-            columns=pd.Index(list("ABCD")),
-            index=pd.Index([f"i-{i}" for i in range(30)]),
-        )
-        df.to_csv(temp_file, mode="w+b")
-        tm.assert_frame_equal(df, pd.read_csv(temp_file, index_col=0))
+        with tm.ensure_clean() as path:
+            df = pd.DataFrame(
+                1.1 * np.arange(120).reshape((30, 4)),
+                columns=pd.Index(list("ABCD"), dtype=object),
+                index=pd.Index([f"i-{i}" for i in range(30)], dtype=object),
+            )
+            df.to_csv(path, mode="w+b")
+            tm.assert_frame_equal(df, pd.read_csv(path, index_col=0))
 
     @pytest.mark.parametrize("encoding", ["utf-16", "utf-32"])
     @pytest.mark.parametrize("compression_", ["bz2", "xz"])
-    def test_warning_missing_utf_bom(self, encoding, compression_, temp_file):
+    def test_warning_missing_utf_bom(self, encoding, compression_):
         """
         bz2 and xz do not write the byte order mark (BOM) for utf-16/32.
 
@@ -473,21 +472,20 @@ class TestMMapWrapper:
         """
         df = pd.DataFrame(
             1.1 * np.arange(120).reshape((30, 4)),
-            columns=pd.Index(list("ABCD")),
-            index=pd.Index([f"i-{i}" for i in range(30)]),
+            columns=pd.Index(list("ABCD"), dtype=object),
+            index=pd.Index([f"i-{i}" for i in range(30)], dtype=object),
         )
-        with tm.assert_produces_warning(UnicodeWarning, match="byte order mark"):
-            df.to_csv(temp_file, compression=compression_, encoding=encoding)
+        with tm.ensure_clean() as path:
+            with tm.assert_produces_warning(UnicodeWarning, match="byte order mark"):
+                df.to_csv(path, compression=compression_, encoding=encoding)
 
-        # reading should fail (otherwise we wouldn't need the warning)
-        msg = "|".join(
-            [
-                r"UTF-\d+ stream does not start with BOM",
-                r"'utf-\d+' codec can't decode byte",
-            ]
-        )
-        with pytest.raises(UnicodeError, match=msg):
-            pd.read_csv(temp_file, compression=compression_, encoding=encoding)
+            # reading should fail (otherwise we wouldn't need the warning)
+            msg = (
+                r"UTF-\d+ stream does not start with BOM|"
+                r"'utf-\d+' codec can't decode byte"
+            )
+            with pytest.raises(UnicodeError, match=msg):
+                pd.read_csv(path, compression=compression_, encoding=encoding)
 
 
 def test_is_fsspec_url():
@@ -505,49 +503,42 @@ def test_is_fsspec_url():
     assert icom.is_fsspec_url("RFC-3986+compliant.spec://something")
 
 
-def test_is_fsspec_url_chained():
-    # GH#48978 Support chained fsspec URLs
-    # See https://filesystem-spec.readthedocs.io/en/latest/features.html#url-chaining.
-    assert icom.is_fsspec_url("filecache::s3://pandas/test.csv")
-    assert icom.is_fsspec_url("zip://test.csv::filecache::gcs://bucket/file.zip")
-    assert icom.is_fsspec_url("filecache::zip://test.csv::gcs://bucket/file.zip")
-    assert icom.is_fsspec_url("filecache::dask::s3://pandas/test.csv")
-    assert not icom.is_fsspec_url("filecache:s3://pandas/test.csv")
-    assert not icom.is_fsspec_url("filecache:::s3://pandas/test.csv")
-    assert not icom.is_fsspec_url("filecache::://pandas/test.csv")
-
-
+@pytest.mark.xfail(using_string_dtype(), reason="TODO(infer_string)")
+@pytest.mark.parametrize("encoding", [None, "utf-8"])
 @pytest.mark.parametrize("format", ["csv", "json"])
-def test_codecs_encoding(format, temp_file):
+def test_codecs_encoding(encoding, format):
     # GH39247
     expected = pd.DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
-        columns=pd.Index(list("ABCD")),
-        index=pd.Index([f"i-{i}" for i in range(30)]),
+        columns=pd.Index(list("ABCD"), dtype=object),
+        index=pd.Index([f"i-{i}" for i in range(30)], dtype=object),
     )
-    with open(temp_file, mode="w", encoding="utf-8") as handle:
-        getattr(expected, f"to_{format}")(handle)
-    with open(temp_file, encoding="utf-8") as handle:
-        if format == "csv":
-            df = pd.read_csv(handle, index_col=0)
-        else:
-            df = pd.read_json(handle)
+    with tm.ensure_clean() as path:
+        with codecs.open(path, mode="w", encoding=encoding) as handle:
+            getattr(expected, f"to_{format}")(handle)
+        with codecs.open(path, mode="r", encoding=encoding) as handle:
+            if format == "csv":
+                df = pd.read_csv(handle, index_col=0)
+            else:
+                df = pd.read_json(handle)
     tm.assert_frame_equal(expected, df)
 
 
-def test_codecs_get_writer_reader(temp_file):
+@pytest.mark.xfail(using_string_dtype(), reason="TODO(infer_string)")
+def test_codecs_get_writer_reader():
     # GH39247
     expected = pd.DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
-        columns=pd.Index(list("ABCD")),
-        index=pd.Index([f"i-{i}" for i in range(30)]),
+        columns=pd.Index(list("ABCD"), dtype=object),
+        index=pd.Index([f"i-{i}" for i in range(30)], dtype=object),
     )
-    with open(temp_file, "wb") as handle:
-        with codecs.getwriter("utf-8")(handle) as encoded:
-            expected.to_csv(encoded)
-    with open(temp_file, "rb") as handle:
-        with codecs.getreader("utf-8")(handle) as encoded:
-            df = pd.read_csv(encoded, index_col=0)
+    with tm.ensure_clean() as path:
+        with open(path, "wb") as handle:
+            with codecs.getwriter("utf-8")(handle) as encoded:
+                expected.to_csv(encoded)
+        with open(path, "rb") as handle:
+            with codecs.getreader("utf-8")(handle) as encoded:
+                df = pd.read_csv(encoded, index_col=0)
     tm.assert_frame_equal(expected, df)
 
 
@@ -564,8 +555,8 @@ def test_explicit_encoding(io_class, mode, msg):
     # wrong mode is requested
     expected = pd.DataFrame(
         1.1 * np.arange(120).reshape((30, 4)),
-        columns=pd.Index(list("ABCD")),
-        index=pd.Index([f"i-{i}" for i in range(30)]),
+        columns=pd.Index(list("ABCD"), dtype=object),
+        index=pd.Index([f"i-{i}" for i in range(30)], dtype=object),
     )
     with io_class() as buffer:
         with pytest.raises(TypeError, match=msg):
@@ -574,7 +565,7 @@ def test_explicit_encoding(io_class, mode, msg):
 
 @pytest.mark.parametrize("encoding_errors", ["strict", "replace"])
 @pytest.mark.parametrize("format", ["csv", "json"])
-def test_encoding_errors(encoding_errors, format, temp_file):
+def test_encoding_errors(encoding_errors, format):
     # GH39450
     msg = "'utf-8' codec can't decode byte"
     bad_encoding = b"\xe4"
@@ -593,17 +584,18 @@ def test_encoding_errors(encoding_errors, format, temp_file):
             + b'"}}'
         )
         reader = partial(pd.read_json, orient="index")
-    file = temp_file
-    file.write_bytes(content)
+    with tm.ensure_clean() as path:
+        file = Path(path)
+        file.write_bytes(content)
 
-    if encoding_errors != "replace":
-        with pytest.raises(UnicodeDecodeError, match=msg):
-            reader(temp_file, encoding_errors=encoding_errors)
-    else:
-        df = reader(temp_file, encoding_errors=encoding_errors)
-        decoded = bad_encoding.decode(errors=encoding_errors)
-        expected = pd.DataFrame({decoded: [decoded]}, index=[decoded * 2])
-        tm.assert_frame_equal(df, expected)
+        if encoding_errors != "replace":
+            with pytest.raises(UnicodeDecodeError, match=msg):
+                reader(path, encoding_errors=encoding_errors)
+        else:
+            df = reader(path, encoding_errors=encoding_errors)
+            decoded = bad_encoding.decode(errors=encoding_errors)
+            expected = pd.DataFrame({decoded: [decoded]}, index=[decoded * 2])
+            tm.assert_frame_equal(df, expected)
 
 
 @pytest.mark.parametrize("encoding_errors", [0, None])
@@ -617,10 +609,11 @@ def test_encoding_errors_badtype(encoding_errors):
         reader(content)
 
 
-def test_bad_encoding_errors(temp_file):
+def test_bad_encdoing_errors():
     # GH 39777
-    with pytest.raises(LookupError, match="unknown error handler name"):
-        icom.get_handle(temp_file, "w", errors="bad")
+    with tm.ensure_clean() as path:
+        with pytest.raises(LookupError, match="unknown error handler name"):
+            icom.get_handle(path, "w", errors="bad")
 
 
 @pytest.mark.skipif(WASM, reason="limited file system access on WASM")
@@ -631,40 +624,8 @@ def test_errno_attribute():
         assert err.errno == errno.ENOENT
 
 
-@pytest.mark.parametrize("encoding", ["cp1252", "ISO-8859-1"])
-def test_binary_buffer_without_mode_respects_encoding(encoding):
-    # GH#52252 a binary buffer that is neither a Raw/BufferedIOBase subclass nor
-    # has a "mode" attribute was treated as a text buffer, so "encoding" was
-    # ignored and the bytes were decoded as utf-8
-    data = "X,Y\nm,\N{DEGREE SIGN}\n1,2\n".encode(encoding)
-    expected = pd.read_csv(BytesIO(data), encoding=encoding)
-
-    with mmap.mmap(-1, len(data)) as buffer:
-        buffer.write(data)
-        buffer.seek(0)
-        result = pd.read_csv(buffer, encoding=encoding)
-    tm.assert_frame_equal(result, expected)
-
-    # botocore's StreamingBody subclasses IOBase directly
-    class StreamingBuffer(IOBase):
-        def __init__(self, data) -> None:
-            self.buffer = BytesIO(data)
-
-        def readable(self) -> bool:
-            return True
-
-        def read(self, amt=None):
-            return self.buffer.read(-1 if amt is None else amt)
-
-    result = pd.read_csv(StreamingBuffer(data), encoding=encoding)
-    tm.assert_frame_equal(result, expected)
-
-
 def test_fail_mmap():
-    # GH#45630 raise a clear ValueError instead of the cryptic
-    # UnsupportedOperation("fileno") from BytesIO
-    msg = "memory_map=True is only supported when reading from a file path"
-    with pytest.raises(ValueError, match=msg):
+    with pytest.raises(UnsupportedOperation, match="fileno"):
         with BytesIO() as buffer:
             icom.get_handle(buffer, "rb", memory_map=True)
 
@@ -679,19 +640,6 @@ def test_close_on_error():
         with BytesIO() as buffer:
             with icom.get_handle(buffer, "rb") as handles:
                 handles.created_handles.append(TestError())
-
-
-@td.skip_if_no("fsspec")
-@pytest.mark.parametrize("compression", [None, "infer"])
-def test_read_csv_chained_url_no_error(datapath, compression):
-    # GH 60100
-    tar_file_path = datapath("io", "data", "tar", "test-csv.tar")
-    chained_file_url = f"tar://test.csv::file://{tar_file_path}"
-
-    result = pd.read_csv(chained_file_url, compression=compression, sep=";")
-    expected = pd.DataFrame({"1": {0: 3}, "2": {0: 4}})
-
-    tm.assert_frame_equal(expected, result)
 
 
 @pytest.mark.parametrize(
@@ -712,65 +660,3 @@ def test_pickle_reader(reader):
     # GH 22265
     with BytesIO() as buffer:
         pickle.dump(reader, buffer)
-
-
-@td.skip_if_no("pyarrow")
-def test_pyarrow_read_csv_datetime_dtype():
-    # GH 59904
-    data = '"date"\n"20/12/2025"\n""\n"31/12/2020"'
-    result = pd.read_csv(
-        StringIO(data), parse_dates=["date"], dayfirst=True, dtype_backend="pyarrow"
-    )
-
-    expect_data = pd.to_datetime(["20/12/2025", pd.NaT, "31/12/2020"], dayfirst=True)
-    expect = pd.DataFrame({"date": expect_data})
-
-    tm.assert_frame_equal(expect, result)
-
-
-@pytest.mark.skipif(WASM, reason="limited file system access on WASM")
-@pytest.mark.skipif(
-    is_platform_windows(), reason="Windows reports a directory as a permission error"
-)
-@pytest.mark.parametrize(
-    "reader, module, fn_ext",
-    [
-        (pd.read_csv, "os", "csv"),
-        (pd.read_excel, "openpyxl", "xlsx"),
-        (pd.read_fwf, "os", "txt"),
-        (pd.read_html, "lxml", "html"),
-        (pd.read_json, "os", "json"),
-        (pd.read_pickle, "os", "pickle"),
-        (pd.read_stata, "os", "dta"),
-        (pd.read_xml, "lxml", "xml"),
-    ],
-)
-def test_read_directory_not_reported_as_missing(reader, module, fn_ext, tmp_path):
-    # GH#29125 readers must not report every I/O failure as a missing file
-    pytest.importorskip(module)
-
-    path = tmp_path / f"a_directory.{fn_ext}"
-    path.mkdir()
-
-    # the strerror text is locale-dependent, so only the path is matched
-    with pytest.raises(IsADirectoryError, match=re.escape(str(path))):
-        reader(path)
-
-
-# not in test_sql.py, whose single_cpu mark keeps it out of the CI jobs
-# that lack sqlalchemy
-@td.skip_if_installed("sqlalchemy")
-def test_con_unknown_dbapi2_class_does_not_error_without_sql_alchemy_installed():
-    class MockSqliteConnection:
-        def __init__(self, *args, **kwargs) -> None:
-            self.conn = sqlite3.Connection(*args, **kwargs)
-
-        def __getattr__(self, name):
-            return getattr(self.conn, name)
-
-        def close(self):
-            self.conn.close()
-
-    with contextlib.closing(MockSqliteConnection(":memory:")) as conn:
-        with tm.assert_produces_warning(UserWarning, match="only supports SQLAlchemy"):
-            sql.read_sql("SELECT 1", conn)

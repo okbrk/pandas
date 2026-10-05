@@ -56,7 +56,7 @@ def format_date_labels(ax: Axes, rot) -> None:
     fig = ax.get_figure()
     if fig is not None:
         # should always be a Figure but can technically be None
-        maybe_adjust_figure(fig, bottom=0.2)  # type: ignore[arg-type]
+        maybe_adjust_figure(fig, bottom=0.2)
 
 
 def table(
@@ -486,6 +486,6 @@ def get_xlim(lines: Iterable[Line2D]) -> tuple[float, float]:
     left, right = np.inf, -np.inf
     for line in lines:
         x = line.get_xdata(orig=False)
-        left = min(np.nanmin(x), left)  # type: ignore[arg-type]
-        right = max(np.nanmax(x), right)  # type: ignore[arg-type]
+        left = min(np.nanmin(x), left)
+        right = max(np.nanmax(x), right)
     return left, right

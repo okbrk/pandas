@@ -24,14 +24,11 @@ import pytest
 
 from pandas.compat import HAS_PYARROW
 
-from pandas.core.dtypes.base import StorageExtensionDtype
-
 import pandas as pd
 import pandas._testing as tm
 from pandas.api.types import is_string_dtype
 from pandas.core.arrays import ArrowStringArray
 from pandas.core.arrays.string_ import StringDtype
-from pandas.tests.arithmetic.test_string import string_dtype_highest_priority
 from pandas.tests.extension import base
 
 
@@ -49,7 +46,7 @@ def maybe_split_array(arr, chunked):
         [*arrow_array[:split].chunks, *arrow_array[split:].chunks]
     )
     assert arrow_array.num_chunks == 2
-    return arr._from_pyarrow_array(arrow_array)
+    return type(arr)(arrow_array)
 
 
 @pytest.fixture(params=[True, False])
@@ -65,9 +62,9 @@ def dtype(string_dtype_arguments):
 
 @pytest.fixture
 def data(dtype, chunked):
-    strings = np.random.default_rng(2).choice(list(string.ascii_letters), size=10)
+    strings = np.random.default_rng(2).choice(list(string.ascii_letters), size=100)
     while strings[0] == strings[1]:
-        strings = np.random.default_rng(2).choice(list(string.ascii_letters), size=10)
+        strings = np.random.default_rng(2).choice(list(string.ascii_letters), size=100)
 
     arr = dtype.construct_array_type()._from_sequence(strings, dtype=dtype)
     return maybe_split_array(arr, chunked)
@@ -101,28 +98,6 @@ def data_for_grouping(dtype, chunked):
 
 
 class TestStringArray(base.ExtensionTests):
-    def _honors_copy_keyword(self, data) -> bool:
-        return data.dtype.storage != "pyarrow"
-
-    @pytest.mark.parametrize("na_action", [None, "ignore"])
-    def test_map(self, data_missing, na_action, request, using_infer_string):
-        if data_missing.dtype.storage == "python" and not using_infer_string:
-            request.applymarker(
-                pytest.mark.xfail(
-                    reason="StringArray[python] _cast_pointwise_result "
-                    "does not re-wrap, going away with infer_string"
-                )
-            )
-        super().test_map(data_missing, na_action)
-
-    def test_combine_le(self, data_repeated):
-        dtype = next(iter(data_repeated(2))).dtype
-        if dtype.storage == "pyarrow" and dtype.na_value is pd.NA:
-            self._combine_le_expected_dtype = "bool[pyarrow]"
-        else:
-            self._combine_le_expected_dtype = "bool"
-        return super().test_combine_le(data_repeated)
-
     def test_eq_with_str(self, dtype):
         super().test_eq_with_str(dtype)
 
@@ -130,7 +105,8 @@ class TestStringArray(base.ExtensionTests):
             # only the NA-variant supports parametrized string alias
             assert dtype == f"string[{dtype.storage}]"
         elif dtype.storage == "pyarrow":
-            assert dtype == "str"
+            with tm.assert_produces_warning(FutureWarning):
+                assert dtype == "string[pyarrow_numpy]"
 
     def test_is_not_string_type(self, dtype):
         # Different from BaseDtypeTests.test_is_not_string_type
@@ -211,36 +187,36 @@ class TestStringArray(base.ExtensionTests):
         return None
 
     def _supports_reduction(self, ser: pd.Series, op_name: str) -> bool:
-        # Item "dtype[Any]" of "dtype[Any] | ExtensionDtype" has no attribute "na_value"
-        return op_name in ["min", "max", "sum", "count"] or (
-            op_name in ("any", "all") and ser.dtype.na_value is np.nan  # type: ignore[union-attr]
+        return (
+            op_name in ["min", "max", "sum"]
+            or ser.dtype.na_value is np.nan  # type: ignore[union-attr]
+            and op_name in ("any", "all")
         )
 
-    def _supports_accumulation(self, ser: pd.Series, op_name: str) -> bool:
-        assert isinstance(ser.dtype, StorageExtensionDtype)
-        return op_name in ["cummin", "cummax", "cumsum"]
-
     def _cast_pointwise_result(self, op_name: str, obj, other, pointwise_result):
-        dtype = cast("StringDtype", tm.get_dtype(obj))
+        dtype = cast(StringDtype, tm.get_dtype(obj))
         if op_name in ["__add__", "__radd__"]:
             cast_to = dtype
-            dtype_other = tm.get_dtype(other) if not isinstance(other, str) else None
-            if isinstance(dtype_other, StringDtype):
-                cast_to = string_dtype_highest_priority(dtype, dtype_other)
         elif dtype.na_value is np.nan:
             cast_to = np.bool_  # type: ignore[assignment]
         elif dtype.storage == "pyarrow":
-            cast_to = "bool[pyarrow]"  # type: ignore[assignment]
+            cast_to = "boolean[pyarrow]"  # type: ignore[assignment]
         else:
             cast_to = "boolean"  # type: ignore[assignment]
         return pointwise_result.astype(cast_to)
+
+    def test_compare_scalar(self, data, comparison_op):
+        ser = pd.Series(data)
+        self._compare_other(ser, data, comparison_op, "abc")
 
     def test_groupby_extension_apply(self, data_for_grouping, groupby_apply_op):
         super().test_groupby_extension_apply(data_for_grouping, groupby_apply_op)
 
     def test_combine_add(self, data_repeated, using_infer_string, request):
         dtype = next(data_repeated(1)).dtype
-        if not using_infer_string and dtype.storage == "python":
+        if using_infer_string and (
+            (dtype.na_value is pd.NA) and dtype.storage == "python"
+        ):
             mark = pytest.mark.xfail(
                 reason="The pointwise operation result will be inferred to "
                 "string[nan, pyarrow], which does not match the input dtype"
@@ -255,38 +231,16 @@ class TestStringArray(base.ExtensionTests):
         if (
             using_infer_string
             and all_arithmetic_operators == "__radd__"
-            and dtype.na_value is pd.NA
-            and (HAS_PYARROW or dtype.storage == "pyarrow")
+            and (
+                (dtype.na_value is pd.NA) or (dtype.storage == "python" and HAS_PYARROW)
+            )
         ):
-            # TODO(infer_string)
             mark = pytest.mark.xfail(
                 reason="The pointwise operation result will be inferred to "
                 "string[nan, pyarrow], which does not match the input dtype"
             )
             request.applymarker(mark)
         super().test_arith_series_with_array(data, all_arithmetic_operators)
-
-    def test_loc_setitem_with_expansion_preserves_ea_index_dtype(
-        self, data, request, using_infer_string
-    ):
-        if not using_infer_string and data.dtype.storage == "python":
-            mark = pytest.mark.xfail(reason="Casts to object")
-            request.applymarker(mark)
-        super().test_loc_setitem_with_expansion_preserves_ea_index_dtype(data)
-
-    def test_loc_setitem_with_expansion_retains_ea_dtype(
-        self, data, using_infer_string, request
-    ):
-        if not using_infer_string and data.dtype.storage == "python":
-            mark = pytest.mark.xfail(reason="Gives object")
-            request.applymarker(mark)
-        super().test_loc_setitem_with_expansion_retains_ea_dtype(data)
-
-    def test_plot_on_y_axis(self, plot_data):
-        # GH 64535
-        # Plotting str is supported by matplotlib, but not pandas at the moment
-        with pytest.raises(TypeError, match="no numeric data to plot"):
-            super().test_plot_on_y_axis(plot_data)
 
 
 class Test2DCompat(base.Dim2CompatTests):
@@ -296,15 +250,11 @@ class Test2DCompat(base.Dim2CompatTests):
             pytest.skip(reason="2D support not implemented for ArrowStringArray")
 
 
-@pytest.mark.parametrize("na_position", ["first", "last"])
-def test_searchsorted_with_na_raises(data_for_sorting, as_series, na_position):
-    # GH50447, GH65837
+def test_searchsorted_with_na_raises(data_for_sorting, as_series):
+    # GH50447
     b, c, a = data_for_sorting
     arr = data_for_sorting.take([2, 0, 1])  # to get [a, b, c]
-    if na_position == "last":
-        arr[-1] = pd.NA
-    else:
-        arr[0] = pd.NA
+    arr[-1] = pd.NA
 
     if as_series:
         arr = pd.Series(arr)
@@ -315,23 +265,3 @@ def test_searchsorted_with_na_raises(data_for_sorting, as_series, na_position):
     )
     with pytest.raises(ValueError, match=msg):
         arr.searchsorted(b)
-
-
-@pytest.mark.parametrize("na_position", ["first", "last"])
-def test_searchsorted_with_na_and_sorter_raises(data_for_sorting, na_position):
-    # GH65837
-    b, c, a = data_for_sorting
-    arr = data_for_sorting.take([0, 2, 1])
-    arr[1] = pd.NA
-
-    if na_position == "last":
-        sorter = np.array([0, 2, 1])
-    else:
-        sorter = np.array([1, 0, 2])
-
-    msg = (
-        "searchsorted requires array to be sorted, "
-        "which is impossible with NAs present."
-    )
-    with pytest.raises(ValueError, match=msg):
-        arr.searchsorted(b, sorter=sorter)

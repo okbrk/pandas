@@ -13,7 +13,6 @@ from pandas.core.dtypes.common import (
     is_integer,
     is_list_like,
 )
-from pandas.core.dtypes.dtypes import DatetimeTZDtype
 from pandas.core.dtypes.generic import (
     ABCDataFrame,
     ABCIndex,
@@ -261,7 +260,7 @@ class KdePlot(HistPlot):
 
     @classmethod
     # error: Signature of "_plot" incompatible with supertype "MPLPlot"
-    def _plot(  # type: ignore[override]
+    def _plot(  #  type: ignore[override]
         cls,
         ax: Axes,
         y: np.ndarray,
@@ -275,11 +274,9 @@ class KdePlot(HistPlot):
     ):
         from scipy.stats import gaussian_kde
 
-        y = remove_na_arraylike(y)  # pyright: ignore[reportAssignmentType]
+        y = remove_na_arraylike(y)
         gkde = gaussian_kde(y, bw_method=bw_method, weights=weights)
 
-        # gaussian_kde.evaluate(None) raises TypeError, so pyright requires this check
-        assert ind is not None
         y = gkde.evaluate(ind)
         lines = MPLPlot._plot(ax, ind, y, style=style, **kwds)
         return lines
@@ -324,7 +321,7 @@ def _grouped_plot(
         naxes=naxes, figsize=figsize, sharex=sharex, sharey=sharey, ax=ax, layout=layout
     )
 
-    for ax, (key, group) in zip(flatten_axes(axes), grouped, strict=False):
+    for ax, (key, group) in zip(flatten_axes(axes), grouped):
         if numeric_only and isinstance(group, ABCDataFrame):
             group = group._get_numeric_data()
         plotf(group, ax, **kwargs)
@@ -385,7 +382,7 @@ def _grouped_hist(
             kwargs["label"] = column
 
     def plot_group(group, ax) -> None:
-        ax.hist(np.asarray(group.dropna()._values), bins=bins, **kwargs)
+        ax.hist(group.dropna().values, bins=bins, **kwargs)
         if legend:
             ax.legend()
 
@@ -447,7 +444,7 @@ def hist_series(
             ax = fig.gca()
         elif ax.get_figure() != fig:
             raise AssertionError("passed axis not bound to passed figure")
-        values = np.asarray(self.dropna()._values)
+        values = self.dropna().values
         if legend:
             kwds["label"] = self.name
         ax.hist(values, bins=bins, **kwds)
@@ -538,7 +535,7 @@ def hist_frame(
         data = data[column]
     # GH32590
     data = data.select_dtypes(
-        include=(np.number, "datetime64", DatetimeTZDtype), exclude="timedelta"
+        include=(np.number, "datetime64", "datetimetz"), exclude="timedelta"
     )
     naxes = len(data.columns)
 
@@ -558,10 +555,10 @@ def hist_frame(
     )
     can_set_label = "label" not in kwds
 
-    for ax, col in zip(flatten_axes(axes), data.columns, strict=False):
+    for ax, col in zip(flatten_axes(axes), data.columns):
         if legend and can_set_label:
             kwds["label"] = col
-        ax.hist(np.asarray(data[col].dropna()._values), bins=bins, **kwds)
+        ax.hist(data[col].dropna().values, bins=bins, **kwds)
         ax.set_title(col)
         ax.grid(grid)
         if legend:

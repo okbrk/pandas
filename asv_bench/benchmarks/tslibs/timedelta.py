@@ -12,7 +12,7 @@ from pandas import Timedelta
 
 class TimedeltaConstructor:
     def setup(self):
-        self.nptimedelta64 = np.timedelta64(3600, "s")
+        self.nptimedelta64 = np.timedelta64(3600)
         self.dttimedelta = datetime.timedelta(seconds=3600)
         self.td = Timedelta(3600, unit="s")
 

@@ -4,10 +4,8 @@ import numbers
 from typing import (
     TYPE_CHECKING,
     ClassVar,
-    Self,
     cast,
 )
-import warnings
 
 import numpy as np
 
@@ -15,9 +13,6 @@ from pandas._libs import (
     lib,
     missing as libmissing,
 )
-from pandas.errors import Pandas4Warning
-from pandas.util._decorators import set_module
-from pandas.util._exceptions import find_stack_level
 
 from pandas.core.dtypes.common import is_list_like
 from pandas.core.dtypes.dtypes import register_extension_dtype
@@ -25,7 +20,6 @@ from pandas.core.dtypes.missing import isna
 
 from pandas.core import ops
 from pandas.core.array_algos import masked_accumulations
-from pandas.core.arrays import ExtensionArray
 from pandas.core.arrays.masked import (
     BaseMaskedArray,
     BaseMaskedDtype,
@@ -36,6 +30,7 @@ if TYPE_CHECKING:
 
     from pandas._typing import (
         DtypeObj,
+        Self,
         npt,
         type_t,
     )
@@ -44,20 +39,14 @@ if TYPE_CHECKING:
 
 
 @register_extension_dtype
-@set_module("pandas")
 class BooleanDtype(BaseMaskedDtype):
     """
     Extension dtype for boolean data.
 
-    This is a pandas Extension dtype for boolean data with support for
-    missing values. BooleanDtype is the dtype companion to :class:`.BooleanArray`,
-    which implements Kleene logic (sometimes called three-value logic) for
-    logical operations. See :ref:`boolean.kleene` for more.
-
     .. warning::
 
-        BooleanDtype is considered experimental. The implementation and
-        parts of the API may change without warning.
+       BooleanDtype is considered experimental. The implementation and
+       parts of the API may change without warning.
 
     Attributes
     ----------
@@ -69,24 +58,12 @@ class BooleanDtype(BaseMaskedDtype):
 
     See Also
     --------
-    arrays.BooleanArray : Array of boolean (True/False) data with missing values.
-    Int64Dtype : Extension dtype for int64 integer data.
     StringDtype : Extension dtype for string data.
 
     Examples
     --------
     >>> pd.BooleanDtype()
     BooleanDtype
-
-    >>> pd.array([True, False, None], dtype=pd.BooleanDtype())
-    <BooleanArray>
-    [True, False, <NA>]
-    Length: 3, dtype: boolean
-
-    >>> pd.array([True, False, None], dtype="boolean")
-    <BooleanArray>
-    [True, False, <NA>]
-    Length: 3, dtype: boolean
     """
 
     name: ClassVar[str] = "boolean"
@@ -108,7 +85,8 @@ class BooleanDtype(BaseMaskedDtype):
     def numpy_dtype(self) -> np.dtype:
         return np.dtype("bool")
 
-    def construct_array_type(self) -> type_t[BooleanArray]:
+    @classmethod
+    def construct_array_type(cls) -> type_t[BooleanArray]:
         """
         Return the array type associated with this dtype.
 
@@ -226,12 +204,12 @@ def coerce_to_array(
 
         inferred_dtype = lib.infer_dtype(values_object, skipna=True)
         integer_like = ("floating", "integer", "mixed-integer-float")
-        if inferred_dtype not in ("boolean", "empty", *integer_like):
+        if inferred_dtype not in ("boolean", "empty") + integer_like:
             raise TypeError("Need to pass bool-like values")
 
         # mypy does not narrow the type of mask_values to npt.NDArray[np.bool_]
         # within this branch, it assumes it can also be None
-        mask_values = cast("npt.NDArray[np.bool_]", isna(values_object))  # type: ignore[redundant-cast]
+        mask_values = cast("npt.NDArray[np.bool_]", isna(values_object))
         values = np.zeros(len(values), dtype=bool)
         values[~mask_values] = values_object[~mask_values].astype(bool)
 
@@ -248,15 +226,17 @@ def coerce_to_array(
         mask = np.zeros(values.shape, dtype=bool)
     elif mask is None:
         mask = mask_values
-    elif isinstance(mask, np.ndarray) and mask.dtype == np.bool_:
-        if mask_values is not None:
-            mask = mask | mask_values
-        elif copy:
-            mask = mask.copy()
     else:
-        mask = np.array(mask, dtype=bool)
-        if mask_values is not None:
-            mask = mask | mask_values
+        if isinstance(mask, np.ndarray) and mask.dtype == np.bool_:
+            if mask_values is not None:
+                mask = mask | mask_values
+            else:
+                if copy:
+                    mask = mask.copy()
+        else:
+            mask = np.array(mask, dtype=bool)
+            if mask_values is not None:
+                mask = mask | mask_values
 
     if values.shape != mask.shape:
         raise ValueError("values.shape and mask.shape must match")
@@ -264,7 +244,6 @@ def coerce_to_array(
     return values, mask
 
 
-@set_module("pandas.arrays")
 class BooleanArray(BaseMaskedArray):
     """
     Array of boolean (True/False) data with missing values.
@@ -276,7 +255,7 @@ class BooleanArray(BaseMaskedArray):
     BooleanArray implements Kleene logic (sometimes called three-value
     logic) for logical operations. See :ref:`boolean.kleene` for more.
 
-    To construct a BooleanArray from generic array-like input, use
+    To construct an BooleanArray from generic array-like input, use
     :func:`pandas.array` specifying ``dtype="boolean"`` (see examples
     below).
 
@@ -316,7 +295,7 @@ class BooleanArray(BaseMaskedArray):
 
     Examples
     --------
-    Create a BooleanArray with :func:`pandas.array`:
+    Create an BooleanArray with :func:`pandas.array`:
 
     >>> pd.array([True, False, None], dtype="boolean")
     <BooleanArray>
@@ -390,30 +369,17 @@ class BooleanArray(BaseMaskedArray):
             assert dtype == "boolean"
         return coerce_to_array(value, copy=copy)
 
-    def _logical_method(self, other, op):
+    def _logical_method(self, other, op):  # type: ignore[override]
         assert op.__name__ in {"or_", "ror_", "and_", "rand_", "xor", "rxor"}
-        ops.disallow_datetimelike_logical_op(self, other, op)
         other_is_scalar = lib.is_scalar(other)
         mask = None
 
         if isinstance(other, BooleanArray):
             other, mask = other._data, other._mask
         elif is_list_like(other):
-            if not isinstance(
-                other, (list, ExtensionArray, np.ndarray)
-            ) and not ops.has_castable_attr(other):
-                warnings.warn(
-                    f"Operation with {type(other).__name__} is deprecated. "
-                    "In a future version these will be treated as scalar-like. "
-                    "To retain the old behavior, explicitly wrap in a Series "
-                    "instead.",
-                    Pandas4Warning,
-                    stacklevel=find_stack_level(),
-                )
-
             other = np.asarray(other, dtype="bool")
             if other.ndim > 1:
-                return NotImplemented
+                raise NotImplementedError("can only perform ops with 1-d structures")
             other, mask = coerce_to_array(other, copy=False)
         elif isinstance(other, np.bool_):
             other = other.item()

@@ -16,45 +16,47 @@ from pandas.util.version import Version
 if TYPE_CHECKING:
     import types
 
-# Update install.rst, pixi.toml,
+# Update install.rst, actions-310-minimum_versions.yaml,
 # deps_minimum.toml & pyproject.toml when updating versions!
 
 VERSIONS = {
-    "adbc-driver-postgresql": "1.7.0",
-    "adbc-driver-sqlite": "1.7.0",
-    "bs4": "4.13.4",
-    "bottleneck": "1.5.0",
-    "fastparquet": "2024.11.0",
-    "fsspec": "2025.7.0",
+    "adbc-driver-postgresql": "0.10.0",
+    "adbc-driver-sqlite": "0.8.0",
+    "bs4": "4.11.2",
+    "blosc": "1.21.3",
+    "bottleneck": "1.3.6",
+    "fastparquet": "2023.10.0",
+    "fsspec": "2022.11.0",
     "html5lib": "1.1",
-    "gcsfs": "2025.7.0",
-    "jinja2": "3.1.6",
-    "lxml.etree": "6.0.0",
-    "matplotlib": "3.10.5",
-    "numba": "0.61.2",
-    "numexpr": "2.11.0",
+    "hypothesis": "6.84.0",
+    "gcsfs": "2022.11.0",
+    "jinja2": "3.1.2",
+    "lxml.etree": "4.9.2",
+    "matplotlib": "3.6.3",
+    "numba": "0.56.4",
+    "numexpr": "2.8.4",
     "odfpy": "1.4.1",
-    "openpyxl": "3.1.5",
-    "psycopg2": "2.9.10",  # (dt dec pq3 ext lo64)
-    "pymysql": "1.1.1",
-    "pyarrow": "16.0.0",
-    "pyiceberg": "0.9.1",
-    "pyreadstat": "1.3.0",
-    "pytest": "8.3.4",
-    "python-calamine": "0.4.0",
-    "pytz": "2020.1",  # keep this pinned (https://github.com/pandas-dev/pandas/pull/65133)
+    "openpyxl": "3.1.0",
+    "psycopg2": "2.9.6",  # (dt dec pq3 ext lo64)
+    "pymysql": "1.0.2",
+    "pyarrow": "10.0.1",
+    "pyreadstat": "1.2.0",
+    "pytest": "7.3.2",
+    "python-calamine": "0.1.7",
+    "pytz": "2023.4",
     "pyxlsb": "1.0.10",
-    "s3fs": "2025.7.0",
-    "scipy": "1.16.1",
-    "sqlalchemy": "2.0.42",
-    "tables": "3.10.2",
+    "s3fs": "2022.11.0",
+    "scipy": "1.10.0",
+    "sqlalchemy": "2.0.0",
+    "tables": "3.8.0",
     "tabulate": "0.9.0",
-    "xarray": "2025.7.1",
-    "xlrd": "2.0.2",
-    "xlsxwriter": "3.2.5",
-    "zstandard": "0.23.0",
-    "qtpy": "2.4.3",
-    "pyqt5": "5.15.11",
+    "xarray": "2022.12.0",
+    "xlrd": "2.0.1",
+    "xlsxwriter": "3.0.5",
+    "zstandard": "0.19.0",
+    "tzdata": "2022.7",
+    "qtpy": "2.3.0",
+    "pyqt5": "5.15.9",
 }
 
 # A mapping from import name to package name (on PyPI) for packages where
@@ -78,7 +80,7 @@ def get_version(module: types.ModuleType) -> str:
     if version is None:
         raise ImportError(f"Can't determine version for {module.__name__}")
     if module.__name__ == "psycopg2":
-        # psycopg2 appends " (dt dec pq3 ext lo64)" to its version
+        # psycopg2 appends " (dt dec pq3 ext lo64)" to it's version
         version = version.split()[0]
     return version
 
@@ -150,9 +152,8 @@ def import_optional_dependency(
     install_name = package_name if package_name is not None else name
 
     msg = (
-        f"`Import {install_name}` failed. {extra} "
-        f"Use pip, conda, or your preferred package management tool "
-        f"to install the {install_name} package."
+        f"Missing optional dependency '{install_name}'. {extra} "
+        f"Use pip or conda to install {install_name}."
     )
     try:
         module = importlib.import_module(name)
@@ -162,7 +163,7 @@ def import_optional_dependency(
         return None
 
     # Handle submodules: if we have submodule, grab parent module from sys.modules
-    parent = name.split(".", maxsplit=1)[0]
+    parent = name.split(".")[0]
     if parent != name:
         install_name = parent
         module_to_get = sys.modules[install_name]

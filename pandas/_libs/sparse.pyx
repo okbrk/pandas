@@ -122,8 +122,6 @@ cdef class IntIndex(SparseIndex):
         locs, lens = get_blocks(self.indices)
         return BlockIndex(self.length, locs, lens)
 
-    @cython.wraparound(False)
-    @cython.boundscheck(False)
     cpdef IntIndex intersect(self, SparseIndex y_):
         cdef:
             Py_ssize_t xi, yi = 0, result_indexer = 0
@@ -175,7 +173,6 @@ cdef class IntIndex(SparseIndex):
         return IntIndex(self.length, new_indices)
 
     @cython.wraparound(False)
-    @cython.boundscheck(False)
     cpdef int32_t lookup(self, Py_ssize_t index):
         """
         Return the internal location if value exists on given index.
@@ -200,7 +197,6 @@ cdef class IntIndex(SparseIndex):
             return -1
 
     @cython.wraparound(False)
-    @cython.boundscheck(False)
     cpdef ndarray[int32_t] lookup_array(self, ndarray[int32_t, ndim=1] indexer):
         """
         Vectorized lookup, returns ndarray[int32_t]
@@ -231,8 +227,6 @@ cdef class IntIndex(SparseIndex):
         return results
 
 
-@cython.wraparound(False)
-@cython.boundscheck(False)
 cpdef get_blocks(ndarray[int32_t, ndim=1] indices):
     cdef:
         Py_ssize_t i, npoints, result_indexer = 0
@@ -327,14 +321,12 @@ cdef class BlockIndex(SparseIndex):
     def ngaps(self) -> int:
         return self.length - self.npoints
 
-    @cython.wraparound(False)
-    @cython.boundscheck(False)
     cdef check_integrity(self):
         """
         Check:
         - Locations are in ascending order
         - No overlapping blocks
-        - Blocks do not start after end of index, nor extend beyond end
+        - Blocks to not start after end of index, nor extend beyond end
         """
         cdef:
             Py_ssize_t i
@@ -377,8 +369,6 @@ cdef class BlockIndex(SparseIndex):
     def to_block_index(self):
         return self
 
-    @cython.wraparound(False)
-    @cython.boundscheck(False)
     cpdef to_int_index(self):
         cdef:
             int32_t i = 0, j, b
@@ -400,8 +390,6 @@ cdef class BlockIndex(SparseIndex):
     def indices(self):
         return self.to_int_index().indices
 
-    @cython.wraparound(False)
-    @cython.boundscheck(False)
     cpdef BlockIndex intersect(self, SparseIndex other):
         """
         Intersect two BlockIndex objects
@@ -501,8 +489,6 @@ cdef class BlockIndex(SparseIndex):
         """
         return BlockUnion(self, y.to_block_index()).result
 
-    @cython.wraparound(False)
-    @cython.boundscheck(False)
     cpdef Py_ssize_t lookup(self, Py_ssize_t index):
         """
         Return the internal location if value exists on given index.
@@ -529,7 +515,6 @@ cdef class BlockIndex(SparseIndex):
         return -1
 
     @cython.wraparound(False)
-    @cython.boundscheck(False)
     cpdef ndarray[int32_t] lookup_array(self, ndarray[int32_t, ndim=1] indexer):
         """
         Vectorized lookup, returns ndarray[int32_t]
@@ -611,8 +596,6 @@ cdef class BlockUnion(BlockMerge):
     lot easier and reduces code duplication
     """
 
-    @cython.wraparound(False)
-    @cython.boundscheck(False)
     cdef _make_merged_blocks(self):
         cdef:
             ndarray[int32_t, ndim=1] xstart, xend, ystart
@@ -661,8 +644,6 @@ cdef class BlockUnion(BlockMerge):
 
         return BlockIndex(self.x.length, out_bloc, out_blen)
 
-    @cython.wraparound(False)
-    @cython.boundscheck(False)
     cdef int32_t _find_next_block_end(self, bint mode) except -1:
         """
         Wow, this got complicated in a hurry
@@ -734,8 +715,6 @@ include "sparse_op_helper.pxi"
 # -----------------------------------------------------------------------------
 # SparseArray mask create operations
 
-@cython.wraparound(False)
-@cython.boundscheck(False)
 def make_mask_object_ndarray(ndarray[object, ndim=1] arr, object fill_value):
     cdef:
         object value
@@ -747,9 +726,7 @@ def make_mask_object_ndarray(ndarray[object, ndim=1] arr, object fill_value):
 
     for i in range(new_length):
         value = arr[i]
-        # the type check must come first: comparing e.g. pd.NA to a non-NA
-        # fill value gives a non-boolean result, see GH#68439
-        if type(value) is type(fill_value) and value == fill_value:
+        if value == fill_value and type(value) is type(fill_value):
             mask[i] = 0
 
     return mask.view(dtype=bool)

@@ -3,9 +3,12 @@ import datetime
 import numpy as np
 import pytest
 
-from pandas.errors import Pandas4Warning
-
 import pandas as pd
+from pandas import (
+    DataFrame,
+    MultiIndex,
+    Series,
+)
 import pandas._testing as tm
 
 
@@ -65,12 +68,12 @@ class TestMultiLevel:
         tm.assert_series_equal(result, expected, check_names=False)
 
     def test_groupby_corner(self):
-        midx = pd.MultiIndex(
+        midx = MultiIndex(
             levels=[["foo"], ["bar"], ["baz"]],
             codes=[[0], [0], [0]],
             names=["one", "two", "three"],
         )
-        df = pd.DataFrame(
+        df = DataFrame(
             [np.random.default_rng(2).random(4)],
             columns=["a", "b", "c", "d"],
             index=midx,
@@ -85,18 +88,16 @@ class TestMultiLevel:
 
         df = ymd[:5].T
         df[2000, 1, 10] = df[2000, 1, 7]
-        assert isinstance(df.columns, pd.MultiIndex)
+        assert isinstance(df.columns, MultiIndex)
         assert (df[2000, 1, 10] == df[2000, 1, 7]).all()
 
     def test_alignment(self):
-        x = pd.Series(
-            data=[1, 2, 3],
-            index=pd.MultiIndex.from_tuples([("A", 1), ("A", 2), ("B", 3)]),
+        x = Series(
+            data=[1, 2, 3], index=MultiIndex.from_tuples([("A", 1), ("A", 2), ("B", 3)])
         )
 
-        y = pd.Series(
-            data=[4, 5, 6],
-            index=pd.MultiIndex.from_tuples([("Z", 1), ("Z", 2), ("B", 3)]),
+        y = Series(
+            data=[4, 5, 6], index=MultiIndex.from_tuples([("Z", 1), ("Z", 2), ("B", 3)])
         )
 
         res = x - y
@@ -127,25 +128,23 @@ class TestMultiLevel:
         tm.assert_frame_equal(result, result2)
 
     def test_multilevel_consolidate(self):
-        index = pd.MultiIndex.from_tuples(
+        index = MultiIndex.from_tuples(
             [("foo", "one"), ("foo", "two"), ("bar", "one"), ("bar", "two")]
         )
-        df = pd.DataFrame(
+        df = DataFrame(
             np.random.default_rng(2).standard_normal((4, 4)), index=index, columns=index
         )
         df["Totals", ""] = df.sum(axis=1)
         df = df._consolidate()
 
     def test_level_with_tuples(self):
-        index = pd.MultiIndex(
+        index = MultiIndex(
             levels=[[("foo", "bar", 0), ("foo", "baz", 0), ("foo", "qux", 0)], [0, 1]],
             codes=[[0, 0, 1, 1, 2, 2], [0, 1, 0, 1, 0, 1]],
         )
 
-        series = pd.Series(np.random.default_rng(2).standard_normal(6), index=index)
-        frame = pd.DataFrame(
-            np.random.default_rng(2).standard_normal((6, 4)), index=index
-        )
+        series = Series(np.random.default_rng(2).standard_normal(6), index=index)
+        frame = DataFrame(np.random.default_rng(2).standard_normal((6, 4)), index=index)
 
         result = series[("foo", "bar", 0)]
         result2 = series.loc[("foo", "bar", 0)]
@@ -164,15 +163,13 @@ class TestMultiLevel:
         tm.assert_frame_equal(result, expected)
         tm.assert_frame_equal(result2, expected)
 
-        index = pd.MultiIndex(
+        index = MultiIndex(
             levels=[[("foo", "bar"), ("foo", "baz"), ("foo", "qux")], [0, 1]],
             codes=[[0, 0, 1, 1, 2, 2], [0, 1, 0, 1, 0, 1]],
         )
 
-        series = pd.Series(np.random.default_rng(2).standard_normal(6), index=index)
-        frame = pd.DataFrame(
-            np.random.default_rng(2).standard_normal((6, 4)), index=index
-        )
+        series = Series(np.random.default_rng(2).standard_normal(6), index=index)
+        frame = DataFrame(np.random.default_rng(2).standard_normal((6, 4)), index=index)
 
         result = series[("foo", "bar")]
         result2 = series.loc[("foo", "bar")]
@@ -211,11 +208,11 @@ class TestMultiLevel:
     def test_empty_frame_groupby_dtypes_consistency(self, d):
         # GH 20888
         group_keys = ["a", "b", "c"]
-        df = pd.DataFrame({"a": [1], "b": [2], "c": [3], "d": [d]})
+        df = DataFrame({"a": [1], "b": [2], "c": [3], "d": [d]})
 
         g = df[df.a == 2].groupby(group_keys)
         result = g.first().index
-        expected = pd.MultiIndex(
+        expected = MultiIndex(
             levels=[[1], [2], [3]], codes=[[], [], []], names=["a", "b", "c"]
         )
 
@@ -230,8 +227,8 @@ class TestMultiLevel:
         ]
         dt = ["demo", "demo", "demo", "demo"]
 
-        idx = pd.MultiIndex.from_tuples(idx_tp, names=["STK_ID", "RPT_Date"])
-        s = pd.Series(dt, index=idx)
+        idx = MultiIndex.from_tuples(idx_tp, names=["STK_ID", "RPT_Date"])
+        s = Series(dt, index=idx)
 
         result = s.groupby(s.index).first()
         assert len(result) == 3
@@ -240,7 +237,7 @@ class TestMultiLevel:
         # GH 20757
         data = [["x", 1]]
         columns = [("a", "b", np.nan), ("a", "c", 0.0)]
-        df = pd.DataFrame(data, columns=pd.MultiIndex.from_tuples(columns))
+        df = DataFrame(data, columns=MultiIndex.from_tuples(columns))
         expected = df.dtypes.a.b
         result = df.a.b.dtypes
         tm.assert_series_equal(result, expected)
@@ -252,7 +249,7 @@ class TestMultiLevel:
             (1, datetime.date(2018, 3, 3)): {"A": 3, "B": 12},
             (1, datetime.date(2018, 3, 4)): {"A": 4, "B": 13},
         }
-        result = pd.DataFrame.from_dict(data_dic, orient="index")
+        result = DataFrame.from_dict(data_dic, orient="index")
         data = {"A": [1, 2, 3, 4], "B": [10, 11, 12, 13]}
         index = [
             [0, 0, 1, 1],
@@ -263,12 +260,12 @@ class TestMultiLevel:
                 datetime.date(2018, 3, 4),
             ],
         ]
-        expected = pd.DataFrame(data=data, index=index)
+        expected = DataFrame(data=data, index=index)
 
         tm.assert_frame_equal(result, expected)
 
     def test_multiindex_with_na(self):
-        df = pd.DataFrame(
+        df = DataFrame(
             [
                 ["A", np.nan, 1.23, 4.56],
                 ["A", "G", 1.23, 4.56],
@@ -277,10 +274,9 @@ class TestMultiLevel:
             columns=["pivot_0", "pivot_1", "col_1", "col_2"],
         ).set_index(["pivot_0", "pivot_1"])
 
-        with tm.assert_produces_warning(Pandas4Warning, match="does not exist"):
-            df.at[("A", "F"), "col_2"] = 0.0
+        df.at[("A", "F"), "col_2"] = 0.0
 
-        expected = pd.DataFrame(
+        expected = DataFrame(
             [
                 ["A", np.nan, 1.23, 4.56],
                 ["A", "G", 1.23, 4.56],
@@ -295,59 +291,9 @@ class TestMultiLevel:
     @pytest.mark.parametrize("na", [None, np.nan])
     def test_multiindex_insert_level_with_na(self, na):
         # GH 59003
-        df = pd.DataFrame([0], columns=[["A"], ["B"]])
+        df = DataFrame([0], columns=[["A"], ["B"]])
         df[na, "B"] = 1
-        tm.assert_frame_equal(df[na], pd.DataFrame([1], columns=["B"]))
-
-    def test_multiindex_dt_with_nan(self):
-        # GH#60388
-        df = pd.DataFrame(
-            [
-                [1, np.nan, 5, np.nan],
-                [2, np.nan, 6, np.nan],
-                [np.nan, 3, np.nan, 7],
-                [np.nan, 4, np.nan, 8],
-            ],
-            index=pd.Series(["a", "b", "c", "d"], dtype=object, name="sub"),
-            columns=pd.MultiIndex.from_product(
-                [
-                    ["value1", "value2"],
-                    [datetime.datetime(2024, 11, 1), datetime.datetime(2024, 11, 2)],
-                ],
-                names=[None, "Date"],
-            ),
-        )
-        df = df.reset_index()
-        result = df[df.columns[0]]
-        expected = pd.Series(["a", "b", "c", "d"], name=("sub", np.nan))
-        tm.assert_series_equal(result, expected)
-
-    def test_multiindex_with_pyarrow_categorical(self):
-        # GH#53051
-        pa = pytest.importorskip("pyarrow")
-
-        df = pd.DataFrame(
-            {"string_column": ["A", "B", "C"], "number_column": [1, 2, 3]}
-        ).astype(
-            {
-                "string_column": pd.ArrowDtype(pa.dictionary(pa.int32(), pa.string())),
-                "number_column": "float[pyarrow]",
-            }
-        )
-
-        df = df.set_index(["string_column", "number_column"])
-
-        df_expected = pd.DataFrame(
-            index=pd.MultiIndex.from_arrays(
-                [["A", "B", "C"], [1, 2, 3]], names=["string_column", "number_column"]
-            )
-        )
-        tm.assert_frame_equal(
-            df,
-            df_expected,
-            check_index_type=False,
-            check_column_type=False,
-        )
+        tm.assert_frame_equal(df[na], DataFrame([1], columns=["B"]))
 
 
 class TestSorted:
@@ -357,19 +303,19 @@ class TestSorted:
         # degenerate case where we sort but don't
         # have a satisfying result :<
         # GH 15797
-        idx = pd.MultiIndex(
+        idx = MultiIndex(
             [["A", "B", "C"], ["c", "b", "a"]], [[0, 1, 2, 0, 1, 2], [0, 2, 1, 1, 0, 2]]
         )
 
-        df = pd.DataFrame({"col": range(len(idx))}, index=idx, dtype="int64")
+        df = DataFrame({"col": range(len(idx))}, index=idx, dtype="int64")
         assert df.index.is_monotonic_increasing is False
 
         sorted = df.sort_index()
         assert sorted.index.is_monotonic_increasing is True
 
-        expected = pd.DataFrame(
+        expected = DataFrame(
             {"col": [1, 4, 5, 2]},
-            index=pd.MultiIndex.from_tuples(
+            index=MultiIndex.from_tuples(
                 [("B", "a"), ("B", "c"), ("C", "a"), ("C", "b")]
             ),
             dtype="int64",

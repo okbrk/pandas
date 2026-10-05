@@ -36,7 +36,7 @@ of elements to display is five, but you may pass a custom number.
 Attributes and underlying data
 ------------------------------
 
-pandas objects have a number of attributes enabling you to access the metadata.
+pandas objects have a number of attributes enabling you to access the metadata
 
 * **shape**: gives the axis dimensions of the object, consistent with ndarray
 * Axis labels
@@ -59,7 +59,7 @@ NumPy's type system to add support for custom arrays
 (see :ref:`basics.dtypes`).
 
 To get the actual data inside a :class:`Index` or :class:`Series`, use
-the ``.array`` property.
+the ``.array`` property
 
 .. ipython:: python
 
@@ -88,18 +88,18 @@ NumPy doesn't have a dtype to represent timezone-aware datetimes, so there
 are two possibly useful representations:
 
 1. An object-dtype :class:`numpy.ndarray` with :class:`Timestamp` objects, each
-   with the correct ``tz``.
+   with the correct ``tz``
 2. A ``datetime64[ns]`` -dtype :class:`numpy.ndarray`, where the values have
-   been converted to UTC and the timezone discarded.
+   been converted to UTC and the timezone discarded
 
-Timezones may be preserved with ``dtype=object``:
+Timezones may be preserved with ``dtype=object``
 
 .. ipython:: python
 
    ser = pd.Series(pd.date_range("2000", periods=2, tz="CET"))
    ser.to_numpy(dtype=object)
 
-Or thrown away with ``dtype='datetime64[ns]'``:
+Or thrown away with ``dtype='datetime64[ns]'``
 
 .. ipython:: python
 
@@ -218,10 +218,6 @@ Furthermore you can align a level of a MultiIndexed DataFrame with a Series.
        [(1, "a"), (1, "b"), (1, "c"), (2, "a")], names=["first", "second"]
    )
    dfmi.sub(column, axis=0, level="second")
-
-When operating with a plain Python list, pandas aligns it to the **columns**
-of the DataFrame (not the rows); to broadcast row-wise, pass ``axis=0`` to
-the explicit method, e.g. ``df.add([1, 2, 3], axis=0)``.
 
 Series and Index also support the :func:`divmod` builtin. This function takes
 the floor division and modulo operation at the same time returning a two-tuple
@@ -594,7 +590,7 @@ arguments. The special value ``all`` can also be used:
 
 .. ipython:: python
 
-    frame.describe(include=["str"])
+    frame.describe(include=["object"])
     frame.describe(include=["number"])
     frame.describe(include="all")
 
@@ -705,55 +701,6 @@ We can also pass infinite values to define the bins:
    arr = np.random.randn(20)
    factor = pd.cut(arr, [-np.inf, 0, np.inf])
    factor
-
-.. _basics.float_precision:
-
-Floating-point precision
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-pandas stores real-valued data using 64-bit floating point by default.
-Floating-point numbers can represent only a finite set of values: a decimal
-number like ``0.03`` is stored as the nearest representable binary fraction,
-and the result of every arithmetic operation is rounded to the nearest
-representable value. As a consequence, computations that would give identical
-results in exact arithmetic can differ, typically around the 16th significant
-digit, depending on how they are carried out:
-
-.. ipython:: python
-
-   ser = pd.Series(0.03, index=range(60))
-   ser.head(20).mean() == ser.mean()
-
-Both means display as ``0.03`` by default, but they are not identical:
-
-.. ipython:: python
-
-   means = pd.Series([ser.head(20).mean(), ser.mean()])
-   with pd.option_context("display.precision", 20):
-       print(means)
-
-This is not specific to pandas: it is inherent to `IEEE 754
-<https://en.wikipedia.org/wiki/IEEE_754>`__ floating-point arithmetic, which
-is used by virtually all modern hardware and software. See the `Python
-tutorial <https://docs.python.org/3/tutorial/floatingpoint.html>`__ for an
-accessible introduction.
-
-For this reason, avoid relying on exact equality of *computed* floating-point
-values. In particular, using computed floats as labels — for example grouping
-on a column produced by a ``mean`` — can split what displays as a single
-value into multiple groups:
-
-.. ipython:: python
-
-   means.nunique()
-
-If you need to compare or group on computed floats, round them first with
-:meth:`~Series.round`, compare with :func:`numpy.isclose`, or bin the values
-with :func:`~pandas.cut`:
-
-.. ipython:: python
-
-   means.round(10).nunique()
 
 .. _basics.apply:
 
@@ -901,36 +848,6 @@ statistics methods, takes an optional ``axis`` argument:
    df.apply(np.cumsum)
    df.apply(np.exp)
 
-.. warning::
-
-   For a general Python callable, :meth:`~DataFrame.apply` invokes it once per
-   column (or once per row with ``axis=1``) in a Python-level loop. It is a
-   tool for flexibility, not speed: when a vectorized equivalent exists, it
-   will generally be much faster. Every example above can be written more
-   directly without ``apply``:
-
-   .. ipython:: python
-
-      df.mean()            # df.apply(lambda x: np.mean(x))
-      df.mean(axis=1)      # df.apply(lambda x: np.mean(x), axis=1)
-      df.max() - df.min()  # df.apply(lambda x: x.max() - x.min())
-      df.cumsum()          # df.apply(np.cumsum)
-      np.exp(df)           # df.apply(np.exp)
-
-   The first four avoid the per-column loop and are several times faster on a
-   wide frame. The last is a NumPy ufunc, which ``apply`` recognizes and
-   applies to the whole frame at once, so the two are equally fast; the
-   direct spelling is simply clearer.
-
-   Before reaching for ``apply``, look for a vectorized alternative: a
-   DataFrame or Series method, an arithmetic or comparison operation
-   (see :ref:`basics.binop`), or an accessor method such as the
-   :ref:`vectorized string methods <text.string_methods>` under ``.str`` or
-   the :ref:`datetime properties <basics.dt_accessors>` under ``.dt``.
-   Reserve ``apply`` for logic with no vectorized equivalent, such as a
-   function from a third-party library that operates on one row or column
-   at a time.
-
 The :meth:`~DataFrame.apply` method will also dispatch on a string method name.
 
 .. ipython:: python
@@ -962,9 +879,6 @@ maximum value for each column occurred:
    )
    tsdf.apply(lambda x: x.idxmax())
 
-(In this case the built-in ``tsdf.idxmax()`` gives the same result more
-simply; ``apply`` is shown for illustration.)
-
 You may also pass additional arguments and keyword arguments to the :meth:`~DataFrame.apply`
 method.
 
@@ -990,7 +904,6 @@ Series operation on each column or row:
    tsdf
    tsdf.apply(pd.Series.interpolate)
 
-(Here too, ``tsdf.interpolate()`` is the idiomatic spelling.)
 
 Finally, :meth:`~DataFrame.apply` takes an argument ``raw`` which is False by default, which
 converts each row or column into a Series before applying the function. When
@@ -1715,7 +1628,7 @@ This enables nice expressions like this:
 
    s[s.dt.day == 2]
 
-You can easily produce tz aware transformations:
+You can easily produces tz aware transformations:
 
 .. ipython:: python
 
@@ -2151,12 +2064,12 @@ different numeric dtypes will **NOT** be combined. The following example will gi
 
 .. ipython:: python
 
-   df1 = pd.DataFrame(np.random.randn(8, 1), columns=["A"], dtype="float64")
+   df1 = pd.DataFrame(np.random.randn(8, 1), columns=["A"], dtype="float32")
    df1
    df1.dtypes
    df2 = pd.DataFrame(
        {
-           "A": pd.Series(np.random.randn(8), dtype="float32"),
+           "A": pd.Series(np.random.randn(8), dtype="float16"),
            "B": pd.Series(np.random.randn(8)),
            "C": pd.Series(np.random.randint(0, 255, size=8), dtype="uint8"),  # [0,255] (range of uint8)
        }
@@ -2450,7 +2363,7 @@ You can also pass the name of a dtype in the `NumPy dtype hierarchy
 
    df.select_dtypes(include=["bool"])
 
-:meth:`~pandas.DataFrame.select_dtypes` also works with generic dtypes.
+:meth:`~pandas.DataFrame.select_dtypes` also works with generic dtypes as well.
 
 For example, to select all numeric and boolean columns while excluding unsigned
 integers:
@@ -2459,18 +2372,11 @@ integers:
 
    df.select_dtypes(include=["number", "bool"], exclude=["unsignedinteger"])
 
-To select string columns include ``str``:
+To select string columns you must use the ``object`` dtype:
 
 .. ipython:: python
 
-   df.select_dtypes(include=[str])
-
-.. note::
-
-    This is a change in pandas 3.0. Previously strings were stored in ``object``
-    dtype columns, so would be selected with ``include=[object]``. See
-    :ref:`the migration guide <string_migration.select_dtypes>` for details on
-    how to write code that works with both versions.
+   df.select_dtypes(include=["object"])
 
 To see all the child dtypes of a generic ``dtype`` like ``numpy.number`` you
 can define a function that returns a tree of child dtypes:

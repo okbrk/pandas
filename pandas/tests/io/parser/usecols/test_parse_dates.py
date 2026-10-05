@@ -7,9 +7,16 @@ from io import StringIO
 
 import pytest
 
-import pandas as pd
+from pandas import (
+    DataFrame,
+    Index,
+    Timestamp,
+)
 import pandas._testing as tm
 
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:Passing a BlockManager to DataFrame:DeprecationWarning"
+)
 xfail_pyarrow = pytest.mark.usefixtures("pyarrow_xfail")
 skip_pyarrow = pytest.mark.usefixtures("pyarrow_skip")
 
@@ -31,16 +38,16 @@ def test_usecols_with_parse_dates2(all_parsers):
     usecols = names[:]
     parse_dates = [0]
 
-    index = pd.Index(
+    index = Index(
         [
-            pd.Timestamp("2008-02-07 09:40"),
-            pd.Timestamp("2008-02-07 09:50"),
-            pd.Timestamp("2008-02-07 10:00"),
+            Timestamp("2008-02-07 09:40"),
+            Timestamp("2008-02-07 09:50"),
+            Timestamp("2008-02-07 10:00"),
         ],
         name="date",
     )
     cols = {"values": [1032.43, 1042.54, 1051.65]}
-    expected = pd.DataFrame(cols, index=index)
+    expected = DataFrame(cols, index=index)
 
     result = parser.read_csv(
         StringIO(data),
@@ -63,7 +70,7 @@ def test_usecols_with_parse_dates3(all_parsers):
     parse_dates = [0]
 
     cols = {
-        "a": pd.Timestamp("2016-09-21"),
+        "a": Timestamp("2016-09-21"),
         "b": [1],
         "c": [1],
         "d": [2],
@@ -74,7 +81,7 @@ def test_usecols_with_parse_dates3(all_parsers):
         "i": [7],
         "j": [8],
     }
-    expected = pd.DataFrame(cols, columns=usecols)
+    expected = DataFrame(cols, columns=usecols)
 
     result = parser.read_csv(StringIO(data), usecols=usecols, parse_dates=parse_dates)
     tm.assert_frame_equal(result, expected)

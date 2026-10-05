@@ -15,7 +15,7 @@ Highlights include:
 
 - Added ``infer_datetime_format`` keyword to ``read_csv/to_datetime`` to allow speedups for homogeneously formatted datetimes.
 - Will intelligently limit display precision for datetime/timedelta formats.
-- Enhanced Panel ``Panel.apply`` method.
+- Enhanced Panel :meth:`~pandas.Panel.apply` method.
 - Suggested tutorials in new :ref:`Tutorials<tutorials>` section.
 - Our pandas ecosystem is growing, We now feature related projects in a new `ecosystem page <https://pandas.pydata.org/community/ecosystem.html>`_ section.
 - Much work has been taking place on improving the docs, and a new :ref:`Contributing<contributing>` section has been added.
@@ -36,17 +36,11 @@ Highlights include:
 
    The recommended way to do this type of assignment is:
 
-   .. code-block:: pycon
+   .. ipython:: python
 
-      >>> df = pd.DataFrame({"A": np.array(["foo", "bar", "bah", "foo", "bar"])})
-      >>> df.loc[0, "A"] = np.nan
-      >>> df
-           A
-      0  NaN
-      1  bar
-      2  bah
-      3  foo
-      4  bar
+      df = pd.DataFrame({"A": np.array(["foo", "bar", "bah", "foo", "bar"])})
+      df.loc[0, "A"] = np.nan
+      df
 
 Output formatting enhancements
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -55,69 +49,41 @@ Output formatting enhancements
 
 - df.info() now honors the option ``max_info_rows``, to disable null counts for large frames (:issue:`5974`)
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> max_info_rows = pd.get_option("max_info_rows")
+     max_info_rows = pd.get_option("max_info_rows")
 
-     >>> df = pd.DataFrame(
-     ...     {
-     ...         "A": np.random.randn(10),
-     ...         "B": np.random.randn(10),
-     ...         "C": pd.date_range("20130101", periods=10),
-     ...     }
-     ... )
-     >>> df.iloc[3:6, [0, 2]] = np.nan
+     df = pd.DataFrame(
+         {
+             "A": np.random.randn(10),
+             "B": np.random.randn(10),
+             "C": pd.date_range("20130101", periods=10),
+         }
+     )
+     df.iloc[3:6, [0, 2]] = np.nan
 
-  .. code-block:: pycon
+  .. ipython:: python
 
      # set to not display the null counts
-     >>> pd.set_option("max_info_rows", 0)
-     >>> df.info()
-     <class 'pandas.DataFrame'>
-     RangeIndex: 10 entries, 0 to 9
-     Data columns (total 3 columns):
-      #   Column  Dtype
-     ---  ------  -----
-      0   A       float64
-      1   B       float64
-      2   C       datetime64[us]
-     dtypes: datetime64[us](1), float64(2)
-     memory usage: 372.0 bytes
+     pd.set_option("max_info_rows", 0)
+     df.info()
 
-  .. code-block:: pycon
+  .. ipython:: python
 
      # this is the default (same as in 0.13.0)
-     >>> pd.set_option("max_info_rows", max_info_rows)
-     >>> df.info()
-     <class 'pandas.DataFrame'>
-     RangeIndex: 10 entries, 0 to 9
-     Data columns (total 3 columns):
-      #   Column  Non-Null Count  Dtype
-     ---  ------  --------------  -----
-      0   A       7 non-null      float64
-      1   B       10 non-null     float64
-      2   C       7 non-null      datetime64[us]
-     dtypes: datetime64[us](1), float64(2)
-     memory usage: 372.0 bytes
+     pd.set_option("max_info_rows", max_info_rows)
+     df.info()
 
 - Add ``show_dimensions`` display option for the new DataFrame repr to control whether the dimensions print.
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> df = pd.DataFrame([[1, 2], [3, 4]])
-     >>> pd.set_option("show_dimensions", False)
-     >>> df
-        0  1
-     0  1  2
-     1  3  4
+      df = pd.DataFrame([[1, 2], [3, 4]])
+      pd.set_option("show_dimensions", False)
+      df
 
-     >>> pd.set_option("show_dimensions", True)
-     >>> df
-        0  1
-     0  1  2
-     1  3  4
-
-     [2 rows x 2 columns]
+      pd.set_option("show_dimensions", True)
+      df
 
 - The ``ArrayFormatter`` for ``datetime`` and ``timedelta64`` now intelligently
   limit precision based on the values in the array (:issue:`3401`)
@@ -132,19 +98,14 @@ Output formatting enhancements
 
   Now the output looks like:
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> df = pd.DataFrame(
-     ...     [pd.Timestamp("20010101"), pd.Timestamp("20040601")], columns=["age"]
-     ... )
-     >>> df["today"] = pd.Timestamp("20130419")
-     >>> df["diff"] = df["today"] - df["age"]
-     >>> df
-              age      today      diff
-     0 2001-01-01 2013-04-19 4491 days
-     1 2004-06-01 2013-04-19 3244 days
-
-     [2 rows x 3 columns]
+     df = pd.DataFrame(
+         [pd.Timestamp("20010101"), pd.Timestamp("20040601")], columns=["age"]
+     )
+     df["today"] = pd.Timestamp("20130419")
+     df["diff"] = df["today"] - df["age"]
+     df
 
 API changes
 ~~~~~~~~~~~
@@ -155,17 +116,10 @@ API changes
 - Added ``Series.str.get_dummies`` vectorized string method (:issue:`6021`), to extract
   dummy/indicator variables for separated string columns:
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> s = pd.Series(["a", "a|b", np.nan, "a|c"])
-     >>> s.str.get_dummies(sep="|")
-        a  b  c
-     0  1  0  0
-     1  1  1  0
-     2  0  0  0
-     3  1  0  1
-
-     [4 rows x 3 columns]
+      s = pd.Series(["a", "a|b", np.nan, "a|c"])
+      s.str.get_dummies(sep="|")
 
 - Added the ``NDFrame.equals()`` method to compare if two NDFrames are
   equal have equal axes, dtypes, and values. Added the
@@ -263,21 +217,14 @@ Enhancements
 - ``MultiIndex.from_product`` convenience function for creating a MultiIndex from
   the cartesian product of a set of iterables (:issue:`6055`):
 
-  .. code-block:: pycon
+  .. ipython:: python
 
-     >>> shades = ["light", "dark"]
-     >>> colors = ["red", "green", "blue"]
+      shades = ["light", "dark"]
+      colors = ["red", "green", "blue"]
 
-     >>> pd.MultiIndex.from_product([shades, colors], names=["shade", "color"])
-     MultiIndex([('light',   'red'),
-                 ('light', 'green'),
-                 ('light',  'blue'),
-                 ( 'dark',   'red'),
-                 ( 'dark', 'green'),
-                 ( 'dark',  'blue')],
-                names=['shade', 'color'])
+      pd.MultiIndex.from_product([shades, colors], names=["shade", "color"])
 
-- Panel ``Panel.apply`` will work on non-ufuncs. See :ref:`the docs<basics.apply>`.
+- Panel :meth:`~pandas.Panel.apply` will work on non-ufuncs. See :ref:`the docs<basics.apply>`.
 
   .. code-block:: ipython
 
@@ -375,7 +322,7 @@ Enhancements
 
       [5 rows x 4 columns]
 
-- Panel ``Panel.apply`` operating on cross-sectional slabs. (:issue:`1148`)
+- Panel :meth:`~pandas.Panel.apply` operating on cross-sectional slabs. (:issue:`1148`)
 
   .. code-block:: ipython
 

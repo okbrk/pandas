@@ -7,6 +7,11 @@ import pytest
 from pandas.compat import PYPY
 
 import pandas as pd
+from pandas import (
+    DataFrame,
+    Index,
+    Series,
+)
 import pandas._testing as tm
 from pandas.core.accessor import PandasDelegate
 from pandas.core.base import (
@@ -16,19 +21,19 @@ from pandas.core.base import (
 
 
 def series_via_frame_from_dict(x, **kwargs):
-    return pd.DataFrame({"a": x}, **kwargs)["a"]
+    return DataFrame({"a": x}, **kwargs)["a"]
 
 
 def series_via_frame_from_scalar(x, **kwargs):
-    return pd.DataFrame(x, **kwargs)[0]
+    return DataFrame(x, **kwargs)[0]
 
 
 @pytest.fixture(
     params=[
-        pd.Series,
+        Series,
         series_via_frame_from_dict,
         series_via_frame_from_scalar,
-        pd.Index,
+        Index,
     ],
     ids=["Series", "DataFrame-dict", "DataFrame-array", "Index"],
 )
@@ -157,7 +162,7 @@ class TestConstruction:
 
         # Explicit dtype specified
         # Forced conversion fails for all -> all cases raise error
-        msg = "|".join(["Out of bounds", "Out of bounds .* present at position 0"])
+        msg = "Out of bounds|Out of bounds .* present at position 0"
         with pytest.raises(pd.errors.OutOfBoundsDatetime, match=msg):
             constructor(a, dtype="datetime64[ns]")
 
@@ -173,15 +178,4 @@ class TestConstruction:
         # https://github.com/pandas-dev/pandas/issues/34843
         arr.flags.writeable = False
         result = constructor(arr)
-        tm.assert_equal(result, expected)
-
-    def test_constructor_from_dict_keys(self, constructor, using_infer_string):
-        # https://github.com/pandas-dev/pandas/issues/60343
-        d = {"a": 1, "b": 2}
-        result = constructor(d.keys(), dtype="str")
-        if using_infer_string:
-            assert result.dtype == "str"
-        else:
-            assert result.dtype == "object"
-        expected = constructor(list(d.keys()), dtype="str")
         tm.assert_equal(result, expected)

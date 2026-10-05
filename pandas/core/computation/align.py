@@ -13,7 +13,7 @@ import warnings
 
 import numpy as np
 
-from pandas._config.config import _global_config as config
+from pandas._config.config import get_option
 
 from pandas.errors import PerformanceWarning
 from pandas.util._exceptions import find_stack_level
@@ -41,8 +41,8 @@ if TYPE_CHECKING:
 
 def _align_core_single_unary_op(
     term,
-) -> tuple[partial[np.ndarray] | type[NDFrame], dict[str, Index] | None]:
-    typ: partial[np.ndarray] | type[NDFrame]
+) -> tuple[partial | type[NDFrame], dict[str, Index] | None]:
+    typ: partial | type[NDFrame]
     axes: dict[str, Index] | None = None
 
     if isinstance(term.value, np.ndarray):
@@ -93,7 +93,7 @@ def _align_core(terms):
 
     from pandas import Series
 
-    ndims = Series(dict(zip(term_index, term_dims, strict=True)))
+    ndims = Series(dict(zip(term_index, term_dims)))
 
     # initial axes are the axes of the largest-axis'd term
     biggest = terms[ndims.idxmax()].value
@@ -116,7 +116,7 @@ def _align_core(terms):
                 axes[ax] = axes[ax].union(itm)
 
     for i, ndim in ndims.items():
-        for axis, items in zip(range(ndim), axes, strict=False):
+        for axis, items in zip(range(ndim), axes):
             ti = terms[i].value
 
             if hasattr(ti, "reindex"):
@@ -128,7 +128,7 @@ def _align_core(terms):
 
                 ordm = np.log10(max(1, abs(reindexer_size - term_axis_size)))
                 if (
-                    config["mode"]["performance_warnings"]
+                    get_option("performance_warnings")
                     and ordm >= 1
                     and reindexer_size >= 10000
                 ):
@@ -144,7 +144,7 @@ def _align_core(terms):
                 obj = ti.reindex(reindexer, axis=axis)
                 terms[i].update(obj)
 
-        terms[i].update(terms[i].value._values)
+        terms[i].update(terms[i].value.values)
 
     return typ, _zip_axes_from_type(typ, axes)
 

@@ -158,7 +158,7 @@ def radviz(
         ax.set_xlim(-1, 1)
         ax.set_ylim(-1, 1)
 
-    to_plot: dict[Hashable, list[list[float]]] = {}
+    to_plot: dict[Hashable, list[list]] = {}
     colors = get_standard_colors(
         num_colors=len(classes), colormap=colormap, color_type="random", color=color
     )
@@ -191,7 +191,7 @@ def radviz(
 
     ax.add_patch(mpl.patches.Circle((0.0, 0.0), radius=1.0, facecolor="none"))
 
-    for xy, name in zip(s, df.columns, strict=True):
+    for xy, name in zip(s, df.columns):
         ax.add_patch(mpl.patches.Circle(xy, radius=0.025, facecolor="gray"))
 
         if xy[0] < 0.0 and xy[1] < 0.0:
@@ -266,12 +266,12 @@ def andrews_curves(
     color_values = get_standard_colors(
         num_colors=len(classes), colormap=colormap, color_type="random", color=color
     )
-    colors = dict(zip(classes, color_values, strict=False))
+    colors = dict(zip(classes, color_values))
     if ax is None:
         ax = plt.gca()
         ax.set_xlim(-np.pi, np.pi)
     for i in range(n):
-        row = np.asarray(df.iloc[i]._values)
+        row = df.iloc[i].values
         f = function(row)
         y = f(t)
         kls = class_col.iat[i]
@@ -296,8 +296,9 @@ def bootstrap_plot(
 ) -> Figure:
     import matplotlib.pyplot as plt
 
-    # random.sample doesn't accept ndarrays
-    data = list(np.asarray(series._values))
+    # TODO: is the failure mentioned below still relevant?
+    # random.sample(ndarray, int) fails on python 3.3, sigh
+    data = list(series.values)
     samplings = [random.sample(data, size) for _ in range(samples)]
 
     means = np.array([np.mean(sampling) for sampling in samplings])
@@ -398,10 +399,10 @@ def parallel_coordinates(
     if sort_labels:
         classes = sorted(classes)
         color_values = sorted(color_values)
-    colors = dict(zip(classes, color_values, strict=True))
+    colors = dict(zip(classes, color_values))
 
     for i in range(n):
-        y = np.asarray(df.iloc[i]._values)
+        y = df.iloc[i].values
         kls = class_col.iat[i]
         label = pprint_thing(kls)
         if label not in used_legends:
@@ -428,7 +429,7 @@ def lag_plot(series: Series, lag: int = 1, ax: Axes | None = None, **kwds) -> Ax
 
     kwds.setdefault("c", plt.rcParams["patch.facecolor"])
 
-    data = np.asarray(series._values)
+    data = series.values
     y1 = data[:-lag]
     y2 = data[lag:]
     if ax is None:

@@ -51,14 +51,11 @@ version 1.4 and have now been removed. Instead :class:`Index` should be used dir
 can it now take all numpy numeric dtypes, i.e.
 ``int8``/ ``int16``/``int32``/``int64``/``uint8``/``uint16``/``uint32``/``uint64``/``float32``/``float64`` dtypes:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.Index([1, 2, 3], dtype=np.int8)
-   Index([1, 2, 3], dtype='int8')
-   >>> pd.Index([1, 2, 3], dtype=np.uint16)
-   Index([1, 2, 3], dtype='uint16')
-   >>> pd.Index([1, 2, 3], dtype=np.float32)
-   Index([1.0, 2.0, 3.0], dtype='float32')
+    pd.Index([1, 2, 3], dtype=np.int8)
+    pd.Index([1, 2, 3], dtype=np.uint16)
+    pd.Index([1, 2, 3], dtype=np.float32)
 
 The ability for :class:`Index` to hold the numpy numeric dtypes has meant some changes in pandas
 functionality. In particular, operations that previously were forced to create 64-bit indexes,
@@ -77,40 +74,33 @@ Below is a possibly non-exhaustive list of changes:
    dtype ``int64``, while they were ``int32`` for :class:`arrays.DatetimeArray`. They are now
    ``int32`` on :class:`DatetimeIndex` also:
 
-   .. code-block:: pycon
+   .. ipython:: python
 
-      >>> idx = pd.date_range(start='1/1/2018', periods=3, freq='M')
-      >>> idx.array.year
-      array([2018, 2018, 2018], dtype=int32)
-      >>> idx.year
-      Index([2018, 2018, 2018], dtype='int32')
+       idx = pd.date_range(start='1/1/2018', periods=3, freq='ME')
+       idx.array.year
+       idx.year
 
 3. Level dtypes on Indexes from :meth:`Series.sparse.from_coo` are now of dtype ``int32``,
    the same as they are on the ``rows``/``cols`` on a scipy sparse matrix. Previously they
    were of dtype ``int64``.
 
-   .. code-block:: pycon
+   .. ipython:: python
 
-      >>> from scipy import sparse
-      >>> A = sparse.coo_matrix(
-      ...     ([3.0, 1.0, 2.0], ([1, 0, 0], [0, 2, 3])), shape=(3, 4)
-      ... )
-      >>> ser = pd.Series.sparse.from_coo(A)
-      >>> ser.index.dtypes
-      level_0    int32
-      level_1    int32
-      dtype: object
+       from scipy import sparse
+       A = sparse.coo_matrix(
+           ([3.0, 1.0, 2.0], ([1, 0, 0], [0, 2, 3])), shape=(3, 4)
+       )
+       ser = pd.Series.sparse.from_coo(A)
+       ser.index.dtypes
 
 4. :class:`Index` cannot be instantiated using a float16 dtype. Previously instantiating
    an :class:`Index` using dtype ``float16`` resulted in a :class:`Float64Index` with a
    ``float64`` dtype. It now raises a ``NotImplementedError``:
 
-   .. code-block:: pycon
+   .. ipython:: python
+       :okexcept:
 
-      >>> pd.Index([1, 2, 3], dtype=np.float16)
-      Traceback (most recent call last):
-          ...
-      NotImplementedError: float16 indexes are not supported
+       pd.Index([1, 2, 3], dtype=np.float16)
 
 
 .. _whatsnew_200.enhancements.io_dtype_backend:
@@ -161,40 +151,19 @@ When this keyword is set to ``"pyarrow"``, then these functions will return pyar
 * :meth:`DataFrame.convert_dtypes`
 * :meth:`Series.convert_dtypes`
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> import io
-   >>> data = io.StringIO("""a,b,c,d,e,f,g,h,i
-   ...     1,2.5,True,a,,,,,
-   ...     3,4.5,False,b,6,7.5,True,a,
-   ... """)
-   >>> df = pd.read_csv(data, dtype_backend="pyarrow")
-   >>> df.dtypes
-   a     int64[pyarrow]
-   b    double[pyarrow]
-   c      bool[pyarrow]
-   d    string[pyarrow]
-   e     int64[pyarrow]
-   f    double[pyarrow]
-   g      bool[pyarrow]
-   h    string[pyarrow]
-   i      null[pyarrow]
-   dtype: object
+    import io
+    data = io.StringIO("""a,b,c,d,e,f,g,h,i
+        1,2.5,True,a,,,,,
+        3,4.5,False,b,6,7.5,True,a,
+    """)
+    df = pd.read_csv(data, dtype_backend="pyarrow")
+    df.dtypes
 
-   >>> data.seek(0)
-   0
-   >>> df_pyarrow = pd.read_csv(data, dtype_backend="pyarrow", engine="pyarrow")
-   >>> df_pyarrow.dtypes
-   a     int64[pyarrow]
-   b    double[pyarrow]
-   c      bool[pyarrow]
-   d    string[pyarrow]
-   e     int64[pyarrow]
-   f    double[pyarrow]
-   g      bool[pyarrow]
-   h    string[pyarrow]
-   i      null[pyarrow]
-   dtype: object
+    data.seek(0)
+    df_pyarrow = pd.read_csv(data, dtype_backend="pyarrow", engine="pyarrow")
+    df_pyarrow.dtypes
 
 Copy-on-Write improvements
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -355,18 +324,10 @@ We return incorrect results with the 6th value.
 
 *New Behavior*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df = pd.DataFrame({"key": ["b"] * 7, "value": 625})
-   >>> df.groupby("key")["value"].cumprod()
-   0                   625
-   1                390625
-   2             244140625
-   3          152587890625
-   4        95367431640625
-   5     59604644775390625
-   6    359414837200037393
-   Name: value, dtype: int64
+    df = pd.DataFrame({"key": ["b"] * 7, "value": 625})
+    df.groupby("key")["value"].cumprod()
 
 We overflow with the 7th value, but the 6th value is still correct.
 
@@ -381,10 +342,10 @@ inputs ``n``, they may return either zero or multiple rows per group. This means
 that they are filtrations, similar to e.g. :meth:`.DataFrameGroupBy.head`. pandas
 now treats them as filtrations (:issue:`13666`).
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> df = pd.DataFrame({"a": [1, 1, 2, 1, 2], "b": [np.nan, 2.0, 3.0, 4.0, 5.0]})
-   >>> gb = df.groupby("a")
+    df = pd.DataFrame({"a": [1, 1, 2, 1, 2], "b": [np.nan, 2.0, 3.0, 4.0, 5.0]})
+    gb = df.groupby("a")
 
 *Old Behavior*
 
@@ -398,12 +359,9 @@ now treats them as filtrations (:issue:`13666`).
 
 *New Behavior*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> gb.nth(n=1)
-      a    b
-   1  1  2.0
-   4  2  5.0
+    gb.nth(n=1)
 
 In particular, the index of the result is derived from the input by selecting
 the appropriate rows. Also, when ``n`` is larger than the group, no rows instead of
@@ -422,12 +380,9 @@ the appropriate rows. Also, when ``n`` is larger than the group, no rows instead
 
 *New Behavior*
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> gb.nth(n=3, dropna="any")
-   Empty DataFrame
-   Columns: [a, b]
-   Index: []
+    gb.nth(n=3, dropna="any")
 
 .. ---------------------------------------------------------------------------
 .. _whatsnew_200.api_breaking:
@@ -464,23 +419,19 @@ the requested dtype:
 
 *New behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.Series(["2016-01-01"], dtype="datetime64[s]")
-   0   2016-01-01
-   dtype: datetime64[s]
+   pd.Series(["2016-01-01"], dtype="datetime64[s]")
 
 With an un-supported dtype, pandas now raises instead of silently swapping in
 a supported dtype:
 
 *New behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
+   :okexcept:
 
-   >>> pd.Series(["2016-01-01"], dtype="datetime64[D]")
-   Traceback (most recent call last):
-       ...
-   TypeError: dtype=datetime64[D] is not supported. Supported resolutions are 's', 'ms', 'us', and 'ns'
+   pd.Series(["2016-01-01"], dtype="datetime64[D]")
 
 .. _whatsnew_200.api_breaking.value_counts:
 
@@ -506,13 +457,9 @@ and the index will be named after the original object (:issue:`49497`).
 
 *New behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.Series(['quetzal', 'quetzal', 'elk'], name='animal').value_counts()
-   animal
-   quetzal    2
-   elk        1
-   Name: count, dtype: int64
+    pd.Series(['quetzal', 'quetzal', 'elk'], name='animal').value_counts()
 
 Likewise for other ``value_counts`` methods (for example, :meth:`DataFrame.value_counts`).
 
@@ -528,10 +475,10 @@ so converting to those dtypes gives exactly the requested dtype:
 
 *Previous behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> idx = pd.date_range("2016-01-01", periods=3)
-   >>> ser = pd.Series(idx)
+   idx = pd.date_range("2016-01-01", periods=3)
+   ser = pd.Series(idx)
 
 *Previous behavior*:
 
@@ -548,35 +495,29 @@ With the new behavior, we get exactly the requested dtype:
 
 *New behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> ser.astype("datetime64[s]")
-   0   2016-01-01
-   1   2016-01-02
-   2   2016-01-03
-   dtype: datetime64[s]
+   ser.astype("datetime64[s]")
 
 For non-supported resolutions e.g. "datetime64[D]", we raise instead of silently
 ignoring the requested dtype:
 
 *New behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
+   :okexcept:
 
-   >>> ser.astype("datetime64[D]")
-   Traceback (most recent call last):
-       ...
-   TypeError: Cannot cast DatetimeArray to dtype datetime64[D]
+   ser.astype("datetime64[D]")
 
 For conversion from ``timedelta64[ns]`` dtypes, the old behavior converted
 to a floating point format.
 
 *Previous behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> idx = pd.timedelta_range("1 Day", periods=3)
-   >>> ser = pd.Series(idx)
+   idx = pd.timedelta_range("1 Day", periods=3)
+   ser = pd.Series(idx)
 
 *Previous behavior*:
 
@@ -600,17 +541,11 @@ The new behavior, as for datetime64, either gives exactly the requested dtype or
 
 *New behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
+   :okexcept:
 
-   >>> ser.astype("timedelta64[s]")
-   0   1 days 00:00:00
-   1   2 days 00:00:00
-   2   3 days 00:00:00
-   dtype: timedelta64[s]
-   >>> ser.astype("timedelta64[D]")
-   Traceback (most recent call last):
-       ...
-   ValueError: Cannot convert from timedelta64[ns] to timedelta64[D]. Supported resolutions are 's', 'ms', 'us', 'ns'
+   ser.astype("timedelta64[s]")
+   ser.astype("timedelta64[D]")
 
 .. _whatsnew_200.api_breaking.default_to_stdlib_tzinfos:
 
@@ -635,15 +570,13 @@ objects instead of ``pytz.FixedOffset`` objects. See (:issue:`34916`)
 
 *New behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> ts = pd.Timestamp("2016-01-01", tz="UTC")
-   >>> type(ts.tzinfo)
-   <class 'datetime.timezone'>
+   ts = pd.Timestamp("2016-01-01", tz="UTC")
+   type(ts.tzinfo)
 
-   >>> ts2 = pd.Timestamp("2016-01-01 04:05:06-07:00")
-   >>> type(ts2.tzinfo)
-   <class 'datetime.timezone'>
+   ts2 = pd.Timestamp("2016-01-01 04:05:06-07:00")
+   type(ts2.tzinfo)
 
 For timezones that are neither UTC nor fixed offsets, e.g. "US/Pacific", we
 continue to default to ``pytz`` objects.
@@ -672,12 +605,10 @@ Now, the axes return an empty :class:`RangeIndex` (:issue:`49572`).
 
 *New behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
 
-   >>> pd.Series().index
-   RangeIndex(start=0, stop=0, step=1)
-   >>> pd.DataFrame().axes
-   [RangeIndex(start=0, stop=0, step=1), RangeIndex(start=0, stop=0, step=1)]
+   pd.Series().index
+   pd.DataFrame().axes
 
 .. _whatsnew_200.api_breaking.to_latex:
 
@@ -778,13 +709,11 @@ In the past, :func:`to_datetime` guessed the format for each element independent
 
 *New behavior*:
 
-.. code-block:: pycon
+.. ipython:: python
+    :okwarning:
 
-   >>> ser = pd.Series(['13-01-2000', '12-01-2000'])
-   >>> pd.to_datetime(ser)
-   0   2000-01-13
-   1   2000-01-12
-   dtype: datetime64[ns]
+     ser = pd.Series(['13-01-2000', '12-01-2000'])
+     pd.to_datetime(ser)
 
 Note that this affects :func:`read_csv` as well.
 
@@ -946,7 +875,7 @@ Removal of prior version deprecations/changes
 - Removed deprecated :meth:`Index.is_monotonic`, and :meth:`Series.is_monotonic`; use ``obj.is_monotonic_increasing`` instead (:issue:`45422`)
 - Removed deprecated :meth:`Index.is_all_dates` (:issue:`36697`)
 - Enforced deprecation disallowing passing a timezone-aware :class:`Timestamp` and ``dtype="datetime64[ns]"`` to :class:`Series` or :class:`DataFrame` constructors (:issue:`41555`)
-- Enforced deprecation disallowing passing a sequence of timezone-aware values and ``dtype="datetime64[ns]"`` to :class:`Series` or :class:`DataFrame` constructors (:issue:`41555`)
+- Enforced deprecation disallowing passing a sequence of timezone-aware values and ``dtype="datetime64[ns]"`` to to :class:`Series` or :class:`DataFrame` constructors (:issue:`41555`)
 - Enforced deprecation disallowing ``numpy.ma.mrecords.MaskedRecords`` in the :class:`DataFrame` constructor; pass ``"{name: data[name] for name in data.dtype.names}`` instead (:issue:`40363`)
 - Enforced deprecation disallowing unit-less "datetime64" dtype in :meth:`Series.astype` and :meth:`DataFrame.astype` (:issue:`47844`)
 - Enforced deprecation disallowing using ``.astype`` to convert a ``datetime64[ns]`` :class:`Series`, :class:`DataFrame`, or :class:`DatetimeIndex` to timezone-aware dtype, use ``obj.tz_localize`` or ``ser.dt.tz_localize`` instead (:issue:`39258`)
@@ -1055,7 +984,7 @@ Removal of prior version deprecations/changes
 - Removed :meth:`Series.str.__iter__` (:issue:`28277`)
 - Removed ``pandas.SparseArray`` in favor of :class:`arrays.SparseArray` (:issue:`30642`)
 - Removed ``pandas.SparseSeries`` and ``pandas.SparseDataFrame``, including pickle support. (:issue:`30642`)
-- Enforced disallowing passing an integer ``fill_value`` to :meth:`DataFrame.shift` and :meth:`Series.shift` with datetime64, timedelta64, or period dtypes (:issue:`32591`)
+- Enforced disallowing passing an integer ``fill_value`` to :meth:`DataFrame.shift` and :meth:`Series.shift`` with datetime64, timedelta64, or period dtypes (:issue:`32591`)
 - Enforced disallowing a string column label into ``times`` in :meth:`DataFrame.ewm` (:issue:`43265`)
 - Enforced disallowing passing ``True`` and ``False`` into ``inclusive`` in :meth:`Series.between` in favor of ``"both"`` and ``"neither"`` respectively (:issue:`40628`)
 - Enforced disallowing using ``usecols`` with out of bounds indices for ``read_csv`` with ``engine="c"`` (:issue:`25623`)
@@ -1116,7 +1045,7 @@ Removal of prior version deprecations/changes
 - Enforced deprecation of silently dropping columns that raised a ``TypeError`` in :class:`Series.transform` and :class:`DataFrame.transform` when used with a list or dictionary (:issue:`43740`)
 - Changed behavior of :meth:`DataFrame.apply` with list-like so that any partial failure will raise an error (:issue:`43740`)
 - Changed behaviour of :meth:`DataFrame.to_latex` to now use the Styler implementation via :meth:`.Styler.to_latex` (:issue:`47970`)
-- Changed behavior of :meth:`Series.__setitem__` with an integer key and a :class:`Float64Index` when the key is not present in the index; previously we treated the key as positional (behaving like ``series.iloc[key] = val``), now we treat it is a label (behaving like ``series.loc[key] = val``), consistent with :meth:`Series.__getitem__` behavior (:issue:`33469`)
+- Changed behavior of :meth:`Series.__setitem__` with an integer key and a :class:`Float64Index` when the key is not present in the index; previously we treated the key as positional (behaving like ``series.iloc[key] = val``), now we treat it is a label (behaving like ``series.loc[key] = val``), consistent with :meth:`Series.__getitem__`` behavior (:issue:`33469`)
 - Removed ``na_sentinel`` argument from :func:`factorize`, :meth:`.Index.factorize`, and :meth:`.ExtensionArray.factorize` (:issue:`47157`)
 - Changed behavior of :meth:`Series.diff` and :meth:`DataFrame.diff` with :class:`ExtensionDtype` dtypes whose arrays do not implement ``diff``, these now raise ``TypeError`` rather than casting to numpy (:issue:`31025`)
 - Enforced deprecation of calling numpy "ufunc"s on :class:`DataFrame` with ``method="outer"``; this now raises ``NotImplementedError`` (:issue:`36955`)

@@ -8,15 +8,6 @@
           [Patrick Hoefler](https://github.com/phofl)
 - Revision: 1
 
-[TOC]
-
-!!! note
-    While this PDEP mentions adding pyarrow as a required dependency in
-    pandas 3.0, this aspect has been delayed until after pandas 3.0 (see the
-    abstract of [PDEP-14](https://pandas.pydata.org/pdeps/0014-string-dtype.html)).
-    Therefore, pandas 3.0 will *not* have a hard requirement on pyarrow but still use
-    pyarrow by default (for the new string dtype) when installed.
-
 ## Abstract
 
 This PDEP proposes that:
@@ -147,10 +138,10 @@ import pandas as pd
 import polars as pl
 
 df = pd.DataFrame(
-    {
-        "a": ["one", "two"],
-        "b": [{"name": "Billy", "age": 3}, {"name": "Bob", "age": 4}],
-    }
+  {
+    'a': ['one', 'two'],
+    'b': [{'name': 'Billy', 'age': 3}, {'name': 'Bob', 'age': 4}],
+  }
 )
 pl.from_pandas(df)
 ```
@@ -194,6 +185,7 @@ Additionally, if a user is installing pandas in an environment where wheels are 
 the user will need to also build Arrow C++ and related dependencies when installing from source. These environments include
 
 - Alpine linux (commonly used as a base for Docker containers)
+- WASM (pyodide and pyscript)
 - Python development versions
 
 Lastly, pandas development and releases will need to be mindful of PyArrow's development and release cadance. For example when

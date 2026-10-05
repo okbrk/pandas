@@ -7,8 +7,6 @@ from typing import (
 
 import numpy as np
 
-from pandas._config import using_python_scalars
-
 from pandas._libs.lib import infer_dtype
 from pandas._libs.tslibs import iNaT
 from pandas.errors import NoBufferPresent
@@ -234,10 +232,7 @@ class PandasColumn(Column):
         """
         Number of null elements. Should always be known.
         """
-        result = self._col.isna().sum()
-        if not using_python_scalars():
-            result = result.item()
-        return result
+        return self._col.isna().sum().item()
 
     @property
     def metadata(self) -> dict[str, pd.Index]:
@@ -340,7 +335,7 @@ class PandasColumn(Column):
                 # this is already single-chunk by the time we get here.
                 arr = arr._pa_array.chunks[0]  # type: ignore[attr-defined]
                 buffer = PandasBufferPyarrow(
-                    arr.buffers()[1],
+                    arr.buffers()[1],  # type: ignore[attr-defined]
                     length=len(arr),
                 )
                 return buffer, dtype
@@ -356,8 +351,12 @@ class PandasColumn(Column):
         elif self.dtype[0] == DtypeKind.STRING:
             # Marshal the strings from a NumPy object array into a byte array
             buf = self._col.to_numpy()
-            # Drop null values to avoid joining None/NaN
-            b = "".join(buf[pd.notna(buf)]).encode(encoding="utf-8")
+            b = bytearray()
+
+            # TODO: this for-loop is slow; can be implemented in Cython/C/C++ later
+            for obj in buf:
+                if isinstance(obj, str):
+                    b.extend(obj.encode(encoding="utf-8"))
 
             # Convert the byte array to a Pandas "buffer" using
             # a NumPy array as the backing store

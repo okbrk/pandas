@@ -2,6 +2,10 @@ import numpy as np
 import pytest
 
 import pandas as pd
+from pandas import (
+    Index,
+    MultiIndex,
+)
 
 
 def test_repr_with_unicode_data():
@@ -12,10 +16,10 @@ def test_repr_with_unicode_data():
 
 
 def test_repr_roundtrip_raises():
-    mi = pd.MultiIndex.from_product([list("ab"), range(3)], names=["first", "second"])
+    mi = MultiIndex.from_product([list("ab"), range(3)], names=["first", "second"])
     msg = "Must pass both levels and codes"
     with pytest.raises(TypeError, match=msg):
-        eval(repr(mi), dict(vars(pd)))
+        eval(repr(mi))
 
 
 def test_unicode_string_with_unicode():
@@ -34,9 +38,9 @@ def test_repr_max_seq_item_setting(idx):
 
 class TestRepr:
     def test_unicode_repr_issues(self):
-        levels = [pd.Index(["a/\u03c3", "b/\u03c3", "c/\u03c3"]), pd.Index([0, 1])]
+        levels = [Index(["a/\u03c3", "b/\u03c3", "c/\u03c3"]), Index([0, 1])]
         codes = [np.arange(3).repeat(2), np.tile(np.arange(2), 3)]
-        index = pd.MultiIndex(levels=levels, codes=codes)
+        index = MultiIndex(levels=levels, codes=codes)
 
         repr(index.levels)
         repr(index.get_level_values(1))
@@ -97,7 +101,7 @@ MultiIndex([...
         n = 1000
         ci = pd.CategoricalIndex(list("a" * n) + (["abc"] * n))
         dti = pd.date_range("2000-01-01", freq="s", periods=n * 2)
-        mi = pd.MultiIndex.from_arrays([ci, ci.codes + 9, dti], names=["a", "b", "dti"])
+        mi = MultiIndex.from_arrays([ci, ci.codes + 9, dti], names=["a", "b", "dti"])
         result = mi[:1].__repr__()
         expected = """\
 MultiIndex([('a', 9, '2000-01-01 00:00:00')],
@@ -145,7 +149,7 @@ MultiIndex([(  'a',  9, '2000-01-01 00:00:00'),
         dti = pd.date_range("2000-01-01", freq="s", periods=n * 2)
         levels = [ci, ci.codes + 9, dti, dti, dti]
         names = ["a", "b", "dti_1", "dti_2", "dti_3"]
-        mi = pd.MultiIndex.from_arrays(levels, names=names)
+        mi = MultiIndex.from_arrays(levels, names=names)
         result = mi[:1].__repr__()
         expected = """MultiIndex([('a', 9, '2000-01-01 00:00:00', '2000-01-01 00:00:00', ...)],
            names=['a', 'b', 'dti_1', 'dti_2', 'dti_3'])"""  # noqa: E501
@@ -194,7 +198,7 @@ MultiIndex([(  'a',  9, '2000-01-01 00:00:00', '2000-01-01 00:00:00', ...),
 
     def test_multiindex_long_element(self):
         # Non-regression test towards GH#52960
-        data = pd.MultiIndex.from_tuples([("c" * 62,)])
+        data = MultiIndex.from_tuples([("c" * 62,)])
 
         expected = (
             "MultiIndex([('cccccccccccccccccccccccccccccccccccccccc"

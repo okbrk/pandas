@@ -7,12 +7,13 @@ import numpy as np
 import pytest
 
 import pandas as pd
+from pandas import Series
 import pandas._testing as tm
 
 
 def assert_check_nselect_boundary(vals, dtype, method):
     # helper function for 'test_boundary_{dtype}' tests
-    ser = pd.Series(vals, dtype=dtype)
+    ser = Series(vals, dtype=dtype)
     result = getattr(ser, method)(3)
     expected_idxr = range(3) if method == "nsmallest" else range(3, 0, -1)
     expected = ser.loc[expected_idxr]
@@ -23,13 +24,13 @@ class TestSeriesNLargestNSmallest:
     @pytest.mark.parametrize(
         "r",
         [
-            pd.Series([3.0, 2, 1, 2, "5"], dtype="object"),
-            pd.Series([3.0, 2, 1, 2, 5], dtype="object"),
+            Series([3.0, 2, 1, 2, "5"], dtype="object"),
+            Series([3.0, 2, 1, 2, 5], dtype="object"),
             # not supported on some archs
             # Series([3., 2, 1, 2, 5], dtype='complex256'),
-            pd.Series([3.0, 2, 1, 2, 5], dtype="complex128"),
-            pd.Series(list("abcde")),
-            pd.Series(list("abcde"), dtype="category"),
+            Series([3.0, 2, 1, 2, 5], dtype="complex128"),
+            Series(list("abcde")),
+            Series(list("abcde"), dtype="category"),
         ],
     )
     @pytest.mark.parametrize("method", ["nlargest", "nsmallest"])
@@ -61,7 +62,7 @@ class TestSeriesNLargestNSmallest:
     def test_nsmallest_nlargest(self, data):
         # float, int, datetime64 (use i8), timedelts64 (same),
         # object that are numbers, object that are strings
-        ser = pd.Series(data)
+        ser = Series(data)
 
         tm.assert_series_equal(ser.nsmallest(2), ser.iloc[[2, 1]])
         tm.assert_series_equal(ser.nsmallest(2, keep="last"), ser.iloc[[2, 3]])
@@ -78,7 +79,7 @@ class TestSeriesNLargestNSmallest:
         tm.assert_series_equal(ser.nlargest(len(ser) + 1), ser.iloc[[4, 0, 1, 3, 2]])
 
     def test_nlargest_misc(self):
-        ser = pd.Series([3.0, np.nan, 1, 2, 5])
+        ser = Series([3.0, np.nan, 1, 2, 5])
         result = ser.nlargest()
         expected = ser.iloc[[4, 0, 3, 2, 1]]
         tm.assert_series_equal(result, expected)
@@ -93,9 +94,9 @@ class TestSeriesNLargestNSmallest:
             ser.nlargest(keep="invalid")
 
         # GH#15297
-        ser = pd.Series([1] * 5, index=[1, 2, 3, 4, 5])
-        expected_first = pd.Series([1] * 3, index=[1, 2, 3])
-        expected_last = pd.Series([1] * 3, index=[5, 4, 3])
+        ser = Series([1] * 5, index=[1, 2, 3, 4, 5])
+        expected_first = Series([1] * 3, index=[1, 2, 3])
+        expected_last = Series([1] * 3, index=[5, 4, 3])
 
         result = ser.nsmallest(3)
         tm.assert_series_equal(result, expected_first)
@@ -112,7 +113,7 @@ class TestSeriesNLargestNSmallest:
     @pytest.mark.parametrize("n", range(1, 5))
     def test_nlargest_n(self, n):
         # GH 13412
-        ser = pd.Series([1, 4, 3, 2], index=[0, 0, 1, 1])
+        ser = Series([1, 4, 3, 2], index=[0, 0, 1, 1])
         result = ser.nlargest(n)
         expected = ser.sort_values(ascending=False).head(n)
         tm.assert_series_equal(result, expected)
@@ -148,13 +149,13 @@ class TestSeriesNLargestNSmallest:
 
     def test_nlargest_duplicate_keep_all_ties(self):
         # see GH#16818
-        ser = pd.Series([10, 9, 8, 7, 7, 7, 7, 6])
+        ser = Series([10, 9, 8, 7, 7, 7, 7, 6])
         result = ser.nlargest(4, keep="all")
-        expected = pd.Series([10, 9, 8, 7, 7, 7, 7])
+        expected = Series([10, 9, 8, 7, 7, 7, 7])
         tm.assert_series_equal(result, expected)
 
         result = ser.nsmallest(2, keep="all")
-        expected = pd.Series([6, 7, 7, 7, 7], index=[7, 3, 4, 5, 6])
+        expected = Series([6, 7, 7, 7, 7], index=[7, 3, 4, 5, 6])
         tm.assert_series_equal(result, expected)
 
     @pytest.mark.parametrize(
@@ -162,9 +163,9 @@ class TestSeriesNLargestNSmallest:
     )
     def test_nlargest_boolean(self, data, expected):
         # GH#26154 : ensure True > False
-        ser = pd.Series(data)
+        ser = Series(data)
         result = ser.nlargest(1)
-        expected = pd.Series(expected)
+        expected = Series(expected)
         tm.assert_series_equal(result, expected)
 
     def test_nlargest_nullable(self, any_numeric_ea_dtype):
@@ -177,12 +178,12 @@ class TestSeriesNLargestNSmallest:
             arr = np.random.default_rng(2).standard_normal(10)
         arr = arr.astype(dtype.lower(), copy=False)
 
-        ser = pd.Series(arr, dtype=dtype, copy=True)
+        ser = Series(arr, dtype=dtype, copy=True)
         ser[1] = pd.NA
         result = ser.nlargest(5)
 
         expected = (
-            pd.Series(np.delete(arr, 1), index=ser.index.delete(1))
+            Series(np.delete(arr, 1), index=ser.index.delete(1))
             .nlargest(5)
             .astype(dtype)
         )
@@ -190,12 +191,12 @@ class TestSeriesNLargestNSmallest:
 
     def test_nsmallest_nan_when_keep_is_all(self):
         # GH#46589
-        s = pd.Series([1, 2, 3, 3, 3, None])
+        s = Series([1, 2, 3, 3, 3, None])
         result = s.nsmallest(3, keep="all")
-        expected = pd.Series([1.0, 2.0, 3.0, 3.0, 3.0])
+        expected = Series([1.0, 2.0, 3.0, 3.0, 3.0])
         tm.assert_series_equal(result, expected)
 
-        s = pd.Series([1, 2, None, None, None])
+        s = Series([1, 2, None, None, None])
         result = s.nsmallest(3, keep="all")
-        expected = pd.Series([1, 2, None, None, None])
+        expected = Series([1, 2, None, None, None])
         tm.assert_series_equal(result, expected)

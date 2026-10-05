@@ -167,9 +167,6 @@ cdef class IntervalMixin:
         """
         Return the midpoint of the Interval.
 
-        The midpoint is the average of the left and right bounds, or equivalently
-        the left bound plus half of :attr:`length`.
-
         See Also
         --------
         Interval.left : Return the left bound for the interval.
@@ -193,10 +190,6 @@ cdef class IntervalMixin:
         """
         Return the length of the Interval.
 
-        The length is the distance between the right and left bounds, i.e.
-        ``right - left``. For time-like bounds this returns a
-        :class:`~datetime.timedelta` or :class:`~pandas.Timedelta`.
-
         See Also
         --------
         Interval.is_empty : Indicates if an interval contains no points.
@@ -215,12 +208,6 @@ cdef class IntervalMixin:
     def is_empty(self):
         """
         Indicates if an interval is empty, meaning it contains no points.
-
-        An interval is considered empty if its `left` and `right` endpoints
-        are equal, and it is not closed on both sides. This means that the
-        interval does not include any real points. In the case of an
-        :class:`pandas.arrays.IntervalArray` or :class:`IntervalIndex`, the
-        property returns a boolean array indicating the emptiness of each interval.
 
         Returns
         -------
@@ -303,11 +290,6 @@ cdef bint _interval_like(other):
 cdef class Interval(IntervalMixin):
     """
     Immutable object implementing an Interval, a bounded slice-like interval.
-
-    An Interval represents a range of values between a left and right bound,
-    with optional inclusion of the endpoints. It is used in :class:`IntervalIndex`
-    and :class:`~pandas.arrays.IntervalArray` for interval-based indexing and
-    analysis.
 
     Attributes
     ----------
@@ -394,16 +376,12 @@ cdef class Interval(IntervalMixin):
     >>> year_2017.length
     Timedelta('365 days 00:00:00')
     """
-    __module__ = "pandas"
     _typ = "interval"
     __array_priority__ = 1000
 
     cdef readonly object left
     """
     Left bound for the interval.
-
-    The left endpoint of the interval. Whether it is included in the interval
-    depends on the value of :attr:`closed`.
 
     See Also
     --------
@@ -423,9 +401,6 @@ cdef class Interval(IntervalMixin):
     cdef readonly object right
     """
     Right bound for the interval.
-
-    The right endpoint of the interval. Whether it is included in the interval
-    depends on the value of :attr:`closed`.
 
     See Also
     --------
@@ -592,7 +567,6 @@ cdef class Interval(IntervalMixin):
 
         Two intervals overlap if they share a common point, including closed
         endpoints. Intervals that only have an open endpoint in common do not
-        overlap, and empty intervals contain no points at all, so they never
         overlap.
 
         Parameters
@@ -632,22 +606,10 @@ cdef class Interval(IntervalMixin):
         >>> i6 = pd.Interval(1, 2, closed='neither')
         >>> i4.overlaps(i6)
         False
-
-        Empty intervals do not overlap with anything, including themselves:
-
-        >>> i7 = pd.Interval(1, 1, closed='left')
-        >>> i4.overlaps(i7)
-        False
-        >>> i7.overlaps(i7)
-        False
         """
         if not isinstance(other, Interval):
             raise TypeError("`other` must be an Interval, "
                             f"got {type(other).__name__}")
-
-        # an empty interval contains no points, so it cannot share one
-        if self.is_empty or other.is_empty:
-            return False
 
         # equality is okay if both endpoints are closed (overlap at a point)
         op1 = le if (self.closed_left and other.closed_right) else lt
